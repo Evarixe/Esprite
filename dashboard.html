@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>wan_sprites — training monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: #0e1116; color: #d6dae0; margin: 0; padding: 16px; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+           padding-bottom: 12px; border-bottom: 1px solid #2a313c; margin-bottom: 16px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .run-info { font-size: 12px; color: #8b95a3; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px;
+           background: #1a2030; color: #8aa6d6; border: 1px solid #2a3a55; }
+  .badge.paused { background: #3a2a10; color: #f0c040; border-color: #6a4a20; }
+  .badge.cooling { background: #102838; color: #50c0f0; border-color: #205a78; }
+  .badge.stopping { background: #3a1010; color: #f08080; border-color: #6a2020; }
+  .badge.live { background: #102a18; color: #80e0a0; border-color: #205040; }
+  .controls { display: flex; gap: 8px; margin-left: auto; }
+  button { background: #1f2530; color: #d6dae0; border: 1px solid #2f3947;
+           padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #2a3140; border-color: #4a5566; }
+  button.primary { background: #2a4060; border-color: #3a6090; color: #c0d8ff; }
+  button.danger  { background: #4a2020; border-color: #6a3030; color: #ffc0c0; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+           gap: 8px; margin-bottom: 16px; }
+  .stat { background: #161b22; border: 1px solid #2a313c; border-radius: 8px;
+          padding: 10px 12px; }
+  .stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+                 color: #8b95a3; }
+  .stat .value { font-size: 20px; font-weight: 600; margin-top: 2px;
+                 font-variant-numeric: tabular-nums; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .chart-card { background: #161b22; border: 1px solid #2a313c; border-radius: 8px;
+                padding: 12px; }
+  .chart-card h2 { font-size: 13px; margin: 0 0 8px 0; color: #b8c2d0; font-weight: 500; }
+  .chart-wrap { height: 240px; }
+  footer { margin-top: 16px; color: #5a6370; font-size: 11px; }
+  @media (max-width: 880px) { .charts { grid-template-columns: 1fr; } }
+
+  /* Config bar — params de la run courante */
+  .cfg-bar { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px;
+             font-size: 11px; color: #8b95a3; }
+  .cfg-bar .c { white-space: nowrap; }
+  .cfg-bar .c b { color: #c4ccd6; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .cfg-bar .c.therm b { color: #50c0f0; }
+
+  /* Live bar (heartbeat) */
+  .live-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+              background: #161b22; border: 1px solid #2a313c; border-radius: 8px;
+              padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
+  .live-bar.stale { opacity: 0.55; }
+  .live-progress { flex: 1 1 220px; min-width: 180px; height: 8px;
+                   background: #0e1116; border-radius: 4px; overflow: hidden;
+                   border: 1px solid #2a313c; position: relative; }
+  .live-progress > .fill { height: 100%; background: linear-gradient(90deg, #2a6090, #50a0e0);
+                           width: 0%; transition: width 250ms linear; }
+  .live-bar .seg { display: flex; align-items: center; gap: 6px;
+                   white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .live-bar .seg .k { color: #8b95a3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .live-bar .seg .v { color: #d6dae0; font-weight: 600; }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: #80e0a0;
+           box-shadow: 0 0 8px #80e0a0; animation: pulse 1.2s ease-in-out infinite; }
+  .pulse.stale { background: #6a6a6a; box-shadow: none; animation: none; }
+  @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>wan_sprites monitor</h1>
+  <span id="run-info" class="run-info">…</span>
+  <span id="status-badge" class="badge live">connecting…</span>
+  <div class="controls">
+    <button id="btn-pause" class="primary">⏸ Pause</button>
+    <button id="btn-checkpoint">💾 Checkpoint now</button>
+    <button id="btn-stop" class="danger">⏹ Stop after step</button>
+  </div>
+</header>
+
+<div class="cfg-bar" id="cfg-bar"></div>
+
+<div class="live-bar" id="live-bar">
+  <span class="pulse" id="live-pulse"></span>
+  <div class="seg"><span class="k">step</span><span class="v" id="live-step">—</span></div>
+  <div class="live-progress"><div class="fill" id="live-fill"></div></div>
+  <div class="seg"><span class="k">bucket</span><span class="v" id="live-bucket">—</span></div>
+  <div class="seg"><span class="k">step/s</span><span class="v" id="live-sps">—</span></div>
+  <div class="seg"><span class="k">tok/s</span><span class="v" id="live-tps">—</span></div>
+  <div class="seg"><span class="k">loss</span><span class="v" id="live-loss">—</span></div>
+  <div class="seg" id="seg-gpu-util"><span class="k">GPU</span><span class="v" id="live-gpu-util">—</span></div>
+  <div class="seg" id="seg-gpu-mem"><span class="k">VRAM</span><span class="v" id="live-gpu-mem">—</span></div>
+  <div class="seg" id="seg-gpu-temp"><span class="k">temp</span><span class="v" id="live-gpu-temp">—</span></div>
+  <div class="seg" id="seg-gpu-power"><span class="k">power</span><span class="v" id="live-gpu-power">—</span></div>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="charts">
+  <div class="chart-card"><h2 id="h2-loss">Loss (short + long + val)</h2><div class="chart-wrap"><canvas id="chart-loss"></canvas></div></div>
+  <div class="chart-card" id="card-class"><h2 id="h2-class">Top-1 par classe (transparent / opaque / struct)</h2><div class="chart-wrap"><canvas id="chart-class"></canvas></div></div>
+  <div class="chart-card"><h2 id="h2-top1">Top-1 global (train + val)</h2><div class="chart-wrap"><canvas id="chart-top1"></canvas></div></div>
+  <div class="chart-card"><h2>Learning rate</h2><div class="chart-wrap"><canvas id="chart-lr"></canvas></div></div>
+  <div class="chart-card"><h2>GPU (temp / util / VRAM · puissance)</h2><div class="chart-wrap"><canvas id="chart-gpu"></canvas></div></div>
+</div>
+
+<footer>history poll 2s · heartbeat poll 1s · /history.json /heartbeat.json /control.json</footer>
+
+<script>
+const POLL_MS = 2000;
+const COLORS = { train: '#5aa1f0', val: '#f0a050', long: '#c080f0', lr: '#60d0a0',
+                 opaque: '#e060a0', transp: '#60c0e0', struct: '#60d090', chance: '#888',
+                 temp: '#f06060', util: '#60d0a0', vram: '#a0a0f0', power: '#f0c040' };
+
+function lineChart(canvasId, datasets, yLabel) {
+  return new Chart(document.getElementById(canvasId), {
+    type: 'line',
+    data: { labels: [], datasets },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { type: 'linear', min: 0, ticks: { color: '#8b95a3' }, grid: { color: '#1a212c' }, title: { display: true, text: 'step', color: '#5a6370' } },
+        y: { ticks: { color: '#8b95a3' }, grid: { color: '#1a212c' }, title: { display: yLabel != null, text: yLabel, color: '#5a6370' } },
+      },
+      plugins: {
+        legend: { labels: { color: '#b8c2d0', boxWidth: 12 } },
+        tooltip: { backgroundColor: '#0e1116', borderColor: '#2a313c', borderWidth: 1 },
+      },
+    },
+  });
+}
+
+// Série continue (train) : ligne sans points. spanGaps pour ignorer les null (long sporadique).
+const L  = (label, color) => ({ label, data: [], borderColor: color, backgroundColor: color, borderWidth: 1.5, pointRadius: 0, tension: 0.2, spanGaps: true });
+// Série val : peu de points (eval périodique) → marqueurs visibles sinon invisible.
+const V  = (label, color) => ({ label, data: [], borderColor: color, backgroundColor: color, borderWidth: 1.5, pointRadius: 4, pointHoverRadius: 6, tension: 0.2, spanGaps: true });
+// Ligne de repère constante (ex: hasard) : pointillé.
+const REF = (label, color) => ({ label, data: [], borderColor: color, backgroundColor: color, borderWidth: 1, borderDash: [4,4], pointRadius: 0, tension: 0 });
+
+const chartLoss = lineChart('chart-loss', [
+  L('train_loss (short)', COLORS.train),
+  L('train_loss (long)',  COLORS.long),
+  V('val_loss (short)',   COLORS.val),
+]);
+const chartClass = lineChart('chart-class', [
+  L('transparent', COLORS.transp),
+  L('opaque (couleurs)', COLORS.opaque),
+  L('struct', COLORS.struct),
+  REF('hasard couleur (0.067)', COLORS.chance),
+]);
+const chartTop1 = lineChart('chart-top1', [
+  L('train_top1', COLORS.train),
+  V('val_top1',   COLORS.val),
+]);
+const chartLR = lineChart('chart-lr', [
+  { label: 'lr', data: [], borderColor: COLORS.lr, backgroundColor: COLORS.lr, borderWidth: 1.5, pointRadius: 0, tension: 0 },
+]);
+
+// Panneau GPU : double axe — gauche (temp °C / util % / VRAM GB, échelle 0-100),
+// droite (puissance W, échelle 0-600). spanGaps pour les anciens runs sans télémétrie.
+const GS = (label, color, axis) => ({ label, data: [], borderColor: color, backgroundColor: color,
+  borderWidth: 1.4, pointRadius: 0, tension: 0.2, spanGaps: true, yAxisID: axis });
+const chartGpu = new Chart(document.getElementById('chart-gpu'), {
+  type: 'line',
+  data: { labels: [], datasets: [
+    GS('temp °C', COLORS.temp, 'y'),
+    GS('util %', COLORS.util, 'y'),
+    GS('VRAM GB', COLORS.vram, 'y'),
+    GS('puissance W', COLORS.power, 'y1'),
+  ] },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x:  { type: 'linear', min: 0, ticks: { color: '#8b95a3' }, grid: { color: '#1a212c' }, title: { display: true, text: 'step', color: '#5a6370' } },
+      y:  { position: 'left',  min: 0, max: 100, ticks: { color: '#8b95a3' }, grid: { color: '#1a212c' }, title: { display: true, text: '°C / % / GB', color: '#5a6370' } },
+      y1: { position: 'right', min: 0, max: 600, ticks: { color: '#c0a040' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'W', color: '#c0a040' } },
+    },
+    plugins: {
+      legend: { labels: { color: '#b8c2d0', boxWidth: 12 } },
+      tooltip: { backgroundColor: '#0e1116', borderColor: '#2a313c', borderWidth: 1 },
+    },
+  },
+});
+
+function statBox(label, value) {
+  return `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+}
+
+function fmt(v, d=4) { return (v == null || Number.isNaN(v)) ? '—' : Number(v).toFixed(d); }
+function fmtSci(v) { return v == null ? '—' : Number(v).toExponential(2); }
+
+let lastEpoch = -1;
+let lastHistoryLen = 0;
+
+async function tick() {
+  // Fetch history
+  let history = [];
+  try {
+    const r = await fetch('/history.json', { cache: 'no-store' });
+    history = await r.json();
+  } catch (e) { /* ignore */ }
+
+  // Fetch control state
+  let ctrl = { pause: false, stop: false, checkpoint_now: false };
+  try {
+    const r = await fetch('/control.json', { cache: 'no-store' });
+    ctrl = await r.json();
+  } catch (e) {}
+
+  // Update charts only if changed
+  if (history.length !== lastHistoryLen) {
+    lastHistoryLen = history.length;
+    // Axe X linéaire : points {x: step, y} → val@0 et logs non-uniformes placés
+    // à leur vraie abscisse (plus de doublon epoch=0 ni de zone vide à gauche).
+    const upd = (chart, mapFns) => {
+      chart.data.datasets.forEach((ds, i) => {
+        ds.data = history.map(r => ({ x: r.step, y: mapFns[i](r) ?? null }));
+      });
+      chart.update('none');
+    };
+    upd(chartLoss,  [r => r.train_loss_short ?? r.train_loss, r => r.train_loss_long, r => r.val_loss_short ?? r.val_loss]);
+    upd(chartClass, [r => r.train_top1_transparent, r => r.train_top1_opaque, r => r.train_top1_struct, r => 1/15]);
+    upd(chartTop1,  [r => r.train_top1, r => r.val_top1_short ?? r.val_top1]);
+    upd(chartLR,    [r => r.lr]);
+    upd(chartGpu,   [r => r.gpu_temp_c, r => r.gpu_util_pct, r => r.gpu_mem_used_gb, r => r.gpu_power_w]);
+  }
+
+  // Update stats
+  const last = history[history.length - 1] || {};
+  // best val loss : uniquement sur les points qui ONT une val (eval périodique)
+  const valPts = history.filter(r => (r.val_loss_short ?? r.val_loss) != null);
+  const best = valPts.reduce((b, r) => {
+    const v = r.val_loss_short ?? r.val_loss;
+    return (b == null || v < (b.val_loss_short ?? b.val_loss)) ? r : b;
+  }, null);
+  const elapsed = history.reduce((s, r) => s + (r.time_s || 0), 0);
+  const lossS = last.train_loss_short ?? last.train_loss;
+  const valLoss = last.val_loss_short ?? last.val_loss;
+  const valTop1 = last.val_top1_short ?? last.val_top1;
+  const statsHtml = [
+    statBox('step', last.step != null ? `${last.step}` : '—'),
+    statBox('train loss', fmt(lossS)),
+    statBox('opaque (couleurs)', fmt(last.train_top1_opaque, 3)),
+    statBox('val loss', fmt(valLoss)),
+    statBox('val top1', fmt(valTop1, 3)),
+    statBox('best val loss', best ? `${fmt(best.val_loss_short ?? best.val_loss)} @ step ${best.step}` : '—'),
+    statBox('lr', fmtSci(last.lr)),
+    statBox('elapsed', `${(elapsed / 60).toFixed(1)} min`),
+  ].join('');
+  document.getElementById('stats').innerHTML = statsHtml;
+
+  // Status badge
+  const badge = document.getElementById('status-badge');
+  const btnPause = document.getElementById('btn-pause');
+  if (ctrl.stop) {
+    badge.className = 'badge stopping'; badge.textContent = 'stop requested';
+  } else if (ctrl.pause) {
+    badge.className = 'badge paused';   badge.textContent = 'paused';
+    btnPause.textContent = '▶ Resume';
+  } else if (window.__cooling) {
+    // pause thermique interne en cours — ne pas écraser par "running"
+    btnPause.textContent = '⏸ Pause';
+  } else {
+    badge.className = 'badge live';     badge.textContent = 'running';
+    btnPause.textContent = '⏸ Pause';
+  }
+
+  // Run info
+  try {
+    const r = await fetch('/info', { cache: 'no-store' });
+    const info = await r.json();
+    document.getElementById('run-info').textContent = info.run;
+  } catch (e) {}
+
+  // Config de la run (params figés) — rendu une fois suffit, mais on re-render
+  // pour gérer un changement de run sur le même port.
+  try {
+    const r = await fetch('/config.json', { cache: 'no-store' });
+    const c = await r.json();
+    window.__cfg = c;
+    renderConfig(c);
+    applyMode(c.mode);
+  } catch (e) {}
+}
+
+// Adapte les libellés des panneaux au type de run (SFT / DPO / génération campagne).
+function applyMode(mode) {
+  const setH2 = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+  const card = document.getElementById('card-class');
+  if (mode === 'dpo') {
+    setH2('h2-loss', 'Loss DPO (−log σ)');
+    setH2('h2-top1', 'Acc — chosen préféré');
+    if (card) card.style.display = 'none';   // top-1 par classe non pertinent en DPO
+  } else if (mode === 'gen_campaign') {
+    setH2('h2-loss', 'Génération campagne (voir barre live ↑)');
+    if (card) card.style.display = 'none';
+  } else {
+    setH2('h2-loss', 'Loss (short + long + val)');
+    setH2('h2-top1', 'Top-1 global (train + val)');
+    if (card) card.style.display = '';
+  }
+}
+
+function renderConfig(c) {
+  if (!c || c.lr == null) return;
+  const items = [];
+  const peak = Number(c.lr).toExponential(1);
+  items.push(`<span class="c">LR pic <b>${peak}</b></span>`);
+  if (c.continuation) items.push(`<span class="c">LR <b>plat</b></span>`);
+  else items.push(`<span class="c">warmup <b>${c.warmup}</b> · cosine→<b>${Math.round((c.min_lr_frac??0.3)*100)}%</b></span>`);
+  items.push(`<span class="c">steps <b>${c.total_steps}</b></span>`);
+  items.push(`<span class="c">batch s/l <b>${c.batch_short}/${c.batch_long ?? '—'}</b></span>`);
+  items.push(`<span class="c">swap <b>${c.no_palette_swap ? 'OFF' : 'ON'}</b></span>`);
+  if (c.short_only) items.push(`<span class="c">bucket <b>short only</b></span>`);
+  else if (c.long_only) items.push(`<span class="c">bucket <b>long only</b></span>`);
+  else items.push(`<span class="c">bucket <b>mixte</b></span>`);
+  if (c.resume) items.push(`<span class="c">resume <b>${String(c.resume).replace(/.*[\\\/]runs[\\\/]/,'')}</b></span>`);
+  // Thermique
+  if (c.pause_temp_c > 0) {
+    const cool = c.pause_cool_c > 0 ? c.pause_cool_c : (c.pause_temp_c - 15);
+    items.push(`<span class="c therm">thermique <b>${c.pause_temp_c}°C→${cool}°C</b></span>`);
+  } else if (c.pause_every > 0) {
+    items.push(`<span class="c therm">pause <b>${c.pause_secs}s / ${c.pause_every} steps</b></span>`);
+  }
+  document.getElementById('cfg-bar').innerHTML = items.join('');
+}
+
+async function postControl(patch) {
+  await fetch('/control', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(patch) });
+  tick();
+}
+
+document.getElementById('btn-pause').addEventListener('click', async () => {
+  const r = await fetch('/control.json', { cache: 'no-store' });
+  const c = await r.json();
+  postControl({ pause: !c.pause });
+});
+document.getElementById('btn-stop').addEventListener('click', () => {
+  if (confirm('Stop training after current step (saves last checkpoint)?')) postControl({ stop: true });
+});
+document.getElementById('btn-checkpoint').addEventListener('click', () => {
+  postControl({ checkpoint_now: true });
+});
+
+tick();
+setInterval(tick, POLL_MS);
+
+// ----- Heartbeat live (step, GPU) -----
+const HB_POLL_MS = 1000;
+function fmtNum(v, digits=0) { return v == null ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: digits }); }
+function fmtFloat(v, d=3) { return v == null ? '—' : Number(v).toFixed(d); }
+
+async function tickHeartbeat() {
+  let hb = null;
+  try {
+    const r = await fetch('/heartbeat.json', { cache: 'no-store' });
+    const j = await r.json();
+    if (j && typeof j.step !== 'undefined') hb = j;
+  } catch (e) {}
+
+  const bar = document.getElementById('live-bar');
+  const pulse = document.getElementById('live-pulse');
+  if (!hb) {
+    bar.classList.add('stale');
+    pulse.classList.add('stale');
+    return;
+  }
+  const ageSec = (Date.now() / 1000) - hb.ts;
+  const stale = ageSec > 5;
+  bar.classList.toggle('stale', stale);
+  pulse.classList.toggle('stale', stale);
+
+  // Pause thermique/chrono interne : le trainer écrit bucket_last="pause" dans le
+  // heartbeat (≠ pause manuelle via control.json). On reflète l'état sur le badge.
+  const cooling = (hb.bucket_last === 'pause') && !stale;
+  window.__cooling = cooling;
+  const badge = document.getElementById('status-badge');
+  if (cooling && badge && !badge.classList.contains('stopping')) {
+    badge.className = 'badge cooling';
+    const cur = hb.gpu && hb.gpu.temp_c != null ? `${hb.gpu.temp_c}°C` : '';
+    const c = window.__cfg || {};
+    let target = '';
+    if (c.pause_temp_c > 0) {
+      const cool = c.pause_cool_c > 0 ? c.pause_cool_c : (c.pause_temp_c - 15);
+      target = ` → ${cool}°C`;
+    }
+    badge.textContent = `❄ cooling ${cur}${target}`;
+  }
+
+  document.getElementById('live-step').textContent = `${fmtNum(hb.step)} / ${fmtNum(hb.total_steps)}`;
+  const pct = (hb.step / Math.max(1, hb.total_steps)) * 100;
+  document.getElementById('live-fill').style.width = pct.toFixed(2) + '%';
+  document.getElementById('live-bucket').textContent = hb.bucket_last || '—';
+  document.getElementById('live-sps').textContent = fmtFloat(hb.step_per_sec_ema, 2);
+  document.getElementById('live-tps').textContent = hb.tokens_per_sec_ema != null
+    ? (hb.tokens_per_sec_ema >= 1000 ? (hb.tokens_per_sec_ema / 1000).toFixed(1) + 'k' : String(hb.tokens_per_sec_ema))
+    : '—';
+  document.getElementById('live-loss').textContent = fmtFloat(hb.loss_running, 3);
+
+  // GPU section
+  const gpu = hb.gpu;
+  const show = gpu && gpu.util_pct != null;
+  document.getElementById('seg-gpu-util').style.display = show ? '' : 'none';
+  document.getElementById('seg-gpu-mem').style.display = show ? '' : 'none';
+  document.getElementById('seg-gpu-temp').style.display = show ? '' : 'none';
+  // power : segment masqué si NVML ne l'expose pas (ancien run sans le champ)
+  const hasPower = show && gpu.power_w != null;
+  document.getElementById('seg-gpu-power').style.display = hasPower ? '' : 'none';
+  if (show) {
+    document.getElementById('live-gpu-util').textContent = gpu.util_pct + '%';
+    document.getElementById('live-gpu-mem').textContent = `${gpu.mem_used_gb} / ${gpu.mem_total_gb} GB`;
+    document.getElementById('live-gpu-temp').textContent = gpu.temp_c + '°C';
+    if (hasPower) {
+      document.getElementById('live-gpu-power').textContent =
+        gpu.power_limit_w != null ? `${gpu.power_w} / ${gpu.power_limit_w} W` : `${gpu.power_w} W`;
+    }
+  }
+}
+
+tickHeartbeat();
+setInterval(tickHeartbeat, HB_POLL_MS);
+</script>
+</body>
+</html>

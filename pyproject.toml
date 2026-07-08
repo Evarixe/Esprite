@@ -1,0 +1,46 @@
+[project]
+name = "wan-sprites"
+version = "0.1.0"
+description = "Pixel art sprite generation — encodeur contrastif, transformer génératif, pipeline dataset veekun"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "pillow>=10.0",
+    "numpy>=2.0",
+    "tqdm>=4.66",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+    "torch",
+    "torchvision",
+    "nvidia-ml-py>=13.595.45",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dataset", "src/encoder"]
+
+# --- PyTorch nightly cu128 (Blackwell sm_120 / RTX 5090) ---
+# uv mutualise le cache global (%LOCALAPPDATA%\uv\cache) entre projets, et
+# crée le venv via hardlinks quand le filesystem le supporte, donc une seule
+# copie disque réelle des wheels torch malgré N projets.
+
+[[tool.uv.index]]
+name = "pytorch-nightly-cu128"
+url = "https://download.pytorch.org/whl/nightly/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-nightly-cu128" }
+torchvision = { index = "pytorch-nightly-cu128" }
+
+[tool.uv]
+# Préfère les liens (hardlink) lors de l'installation pour partager les bytes
+# avec le cache global. Sur Windows, NTFS supporte les hardlinks intra-volume.
+link-mode = "hardlink"
+# torch nightly est une pre-release, on l'autorise globalement
+prerelease = "allow"
+# Restreint le lockfile à Windows : évite que le résolveur essaie d'inclure
+# triton Linux (qui n'est pas dispo sur l'index PyTorch nightly).
+environments = ["sys_platform == 'win32'"]

@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>wan_sprites — arena d'éval humaine</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --panel2: #23272f; --border: #32363f;
+    --text: #d8dbe2; --dim: #8b91a0; --accent: #6aa9ff; --ok: #59c98a;
+    --warn: #e0a04c; --bad: #e06060; --sel: #3a4a68;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 18px;
+           background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .dim { color: var(--dim); font-size: 12px; }
+  .tabs { display: flex; gap: 4px; margin-left: auto; }
+  .tabs button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+                 padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .tabs button.active { background: var(--sel); border-color: var(--accent); }
+  main { padding: 16px 18px; max-width: 1400px; margin: 0 auto; }
+  .hidden { display: none !important; }
+  kbd { background: var(--panel2); border: 1px solid var(--border); border-bottom-width: 2px;
+        border-radius: 4px; padding: 0 5px; font-size: 11px; color: var(--text); }
+  .keyshelp { color: var(--dim); font-size: 12px; margin: 10px 0; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+           background: var(--panel2); border: 1px solid var(--accent); padding: 10px 22px;
+           border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .18s;
+           pointer-events: none; z-index: 50; }
+  .toast.show { opacity: 1; }
+
+  /* ---- arena ---- */
+  .duel { display: grid; grid-template-columns: 1fr 120px 1fr; gap: 14px; align-items: start; }
+  .side { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+          padding: 14px; text-align: center; }
+  .side.win-flash { border-color: var(--ok); }
+  .side h3 { margin: 0 0 8px; font-size: 15px; color: var(--accent); }
+  .anim-box { display: inline-block; background: #3c3c3c; border-radius: 6px;
+              image-rendering: pixelated; line-height: 0; }
+  canvas.anim { width: 256px; height: 256px; image-rendering: pixelated; border-radius: 6px; }
+  .strip { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
+  .strip canvas { width: 64px; height: 64px; image-rendering: pixelated;
+                  background: #3c3c3c; border-radius: 3px; }
+  .side .meta { margin-top: 8px; font-size: 12px; color: var(--dim); }
+  .badges { display: flex; gap: 6px; justify-content: center; margin-top: 6px; flex-wrap: wrap; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; background: var(--panel2);
+           border: 1px solid var(--border); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .badge.bad { color: var(--bad); border-color: var(--bad); }
+  .center-col { text-align: center; padding-top: 30px; }
+  .center-col .ref-label { font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+  .center-col canvas { width: 96px; height: 96px; image-rendering: pixelated;
+                       background: #3c3c3c; border-radius: 6px; }
+  .itembar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px;
+             flex-wrap: wrap; }
+  .itembar .chip { background: var(--panel2); border: 1px solid var(--border);
+                   border-radius: 6px; padding: 3px 10px; font-size: 12px; }
+  .axis-vote { display: flex; flex-direction: column; gap: 6px; margin: 14px auto; max-width: 460px; }
+  .axis-row { display: flex; align-items: center; gap: 8px; }
+  .axis-row .axis-name { flex: 1; font-size: 13px; }
+  .axis-row .av { border: 1px solid var(--border); border-radius: 7px; padding: 5px 12px;
+                  font-size: 13px; background: var(--panel); color: var(--fg); cursor: pointer;
+                  min-width: 46px; }
+  .axis-row .av:hover { border-color: var(--accent); }
+  .axis-row .av.sel { border-color: var(--accent); background: var(--accent); color: #06121f; font-weight: 700; }
+  .progress { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden;
+              flex: 1; min-width: 120px; }
+  .progress > div { height: 100%; background: var(--accent); }
+
+  /* ---- planche ---- */
+  .plank-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px;
+                   flex-wrap: wrap; }
+  select, .plank-toolbar button { background: var(--panel2); color: var(--text);
+       border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+  .cell { background: var(--panel); border: 2px solid var(--border); border-radius: 8px;
+          padding: 8px; text-align: center; cursor: pointer; position: relative; }
+  .cell.selected { border-color: var(--accent); }
+  .cell.flagged { border-color: var(--bad); }
+  .cell canvas { width: 128px; height: 128px; image-rendering: pixelated;
+                 background: #3c3c3c; border-radius: 4px; }
+  .cell .lbl { font-size: 11px; color: var(--dim); margin-top: 4px; }
+  .cell .mark { position: absolute; top: 4px; right: 6px; font-size: 12px; font-weight: 700; }
+  .cell .mark.flag { color: var(--bad); }
+  .cell .mark.rate { color: var(--ok); }
+  .detail { margin-top: 14px; background: var(--panel); border: 1px solid var(--border);
+            border-radius: 10px; padding: 14px; }
+  .detail .strip canvas { width: 96px; height: 96px; }
+
+  /* ---- résultats ---- */
+  table { border-collapse: collapse; margin: 10px 0 22px; }
+  th, td { border: 1px solid var(--border); padding: 5px 12px; font-size: 13px;
+           text-align: center; }
+  th { background: var(--panel2); }
+  td.name { text-align: left; font-weight: 600; }
+  h2 { font-size: 15px; margin: 20px 0 4px; color: var(--accent); }
+  .note { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>wan_sprites — arena</h1>
+  <span class="dim" id="campInfo">…</span>
+  <div class="progress" title="couverture arena"><div id="covBar" style="width:0%"></div></div>
+  <span class="dim" id="voteCount"></span>
+  <div class="tabs">
+    <button id="tabArena" class="active">Arena <kbd>F1</kbd></button>
+    <button id="tabPlank">Planche <kbd>F2</kbd></button>
+    <button id="tabResults">Résultats <kbd>F3</kbd></button>
+  </div>
+</header>
+<main>
+
+<!-- ====================== ARENA ====================== -->
+<section id="viewArena">
+  <div class="itembar" id="itemBar"></div>
+  <div class="duel">
+    <div class="side" id="sideL">
+      <h3>A <span class="dim">(gauche)</span></h3>
+      <div class="anim-box"><canvas class="anim" id="animL" width="32" height="32"></canvas></div>
+      <div class="badges" id="badgesL"></div>
+      <div class="strip" id="stripL"></div>
+    </div>
+    <div class="center-col">
+      <div id="refBox">
+        <div class="ref-label">référence</div>
+        <canvas id="refCanvas" width="32" height="32"></canvas>
+      </div>
+      <div style="margin-top:14px; font-size:12px; color:var(--dim);" id="playInfo"></div>
+    </div>
+    <div class="side" id="sideR">
+      <h3>B <span class="dim">(droite)</span></h3>
+      <div class="anim-box"><canvas class="anim" id="animR" width="32" height="32"></canvas></div>
+      <div class="badges" id="badgesR"></div>
+      <div class="strip" id="stripR"></div>
+    </div>
+  </div>
+  <div class="axis-vote">
+    <div class="axis-row" data-axis="movement">
+      <span class="axis-name">Mouvement <span class="dim"><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></span></span>
+      <button class="av" data-o="left">◀ A</button>
+      <button class="av" data-o="tie">=</button>
+      <button class="av" data-o="right">B ▶</button>
+    </div>
+    <div class="axis-row" data-axis="cleanliness">
+      <span class="axis-name">Propreté <span class="dim"><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd></span></span>
+      <button class="av" data-o="left">◀ A</button>
+      <button class="av" data-o="tie">=</button>
+      <button class="av" data-o="right">B ▶</button>
+    </div>
+    <div class="axis-row" data-axis="fidelity">
+      <span class="axis-name" title="l'identité et les couleurs générées correspondent-elles à la référence donnée">Fidélité à la réf <span class="dim">(clic)</span></span>
+      <button class="av" data-o="left">◀ A</button>
+      <button class="av" data-o="tie">=</button>
+      <button class="av" data-o="right">B ▶</button>
+    </div>
+  </div>
+  <div class="keyshelp">
+    Coche les axes où tu vois une diff, puis <kbd>Entrée</kbd> valider + suivant.
+    <b>Mouvement</b> <kbd>←</kbd>/<kbd>↓</kbd>/<kbd>→</kbd> · <b>Propreté</b> <kbd>Q</kbd>/<kbd>S</kbd>/<kbd>D</kbd> ·
+    <b>Fidélité</b> au clic · <kbd>X</kbd> les deux mauvais · <kbd>Échap</kbd> effacer ·
+    <kbd>U</kbd> annuler · <kbd>Espace</kbd> pause · <kbd>,</kbd>/<kbd>.</kbd> frame · <kbd>[</kbd>/<kbd>]</kbd> vitesse
+  </div>
+</section>
+
+<!-- ====================== PLANCHE ====================== -->
+<section id="viewPlank" class="hidden">
+  <div class="plank-toolbar">
+    <label>Checkpoint <select id="plankCkpt"></select></label>
+    <span class="dim">page <span id="plankPage">1</span>/<span id="plankPages">1</span></span>
+    <button id="plankPrev">◀ <kbd>P</kbd></button>
+    <button id="plankNext"><kbd>N</kbd> ▶</button>
+    <span class="dim" id="plankStatus"></span>
+  </div>
+  <div class="keyshelp">
+    <kbd>1</kbd>…<kbd>5</kbd> note LA PLANCHE entière (les overrides individuels sont conservés) ·
+    <kbd>A</kbd> = approuver la planche (raccourci note 5) ·
+    flèches = sélectionner une cellule · <kbd>X</kbd> flag outlier ·
+    <kbd>Maj</kbd>+<kbd>1</kbd>…<kbd>5</kbd> note individuelle ·
+    <kbd>Entrée</kbd> détail (bande de frames) · <kbd>S</kbd> anim/statique ·
+    <kbd>Espace</kbd> pause · <kbd>U</kbd> annuler
+  </div>
+  <div class="grid" id="plankGrid"></div>
+  <div class="detail hidden" id="plankDetail"></div>
+</section>
+
+<!-- ====================== RÉSULTATS ====================== -->
+<section id="viewResults" class="hidden">
+  <div id="resultsBody">chargement…</div>
+</section>
+
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+// ============================================================================
+// État global + utilitaires
+// ============================================================================
+const $ = id => document.getElementById(id);
+const BG = [60, 60, 60];                       // fond d'aplat (= render_samples)
+const STATUS_COLOR = { short: [200,70,70,0.45], no_separator: [220,140,60,0.4],
+                       unknown_token: [140,30,30,0.5] };
+let campaign = null;
+let votes = [];                                // miroir de votes.jsonl
+let mode = "arena";
+let fps = 6, playing = true, tick = 0, manualStep = 0;
+let animRegistry = [];                         // {canvas, frames:[ImageBitmap-like], n}
+
+function toast(msg, ms = 1800) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), ms);
+}
+async function jget(url) { const r = await fetch(url); return r.json(); }
+async function jpost(url, obj) {
+  const r = await fetch(url, { method: "POST", body: JSON.stringify(obj) });
+  return r.json();
+}
+function b64ToBytes(b64) {
+  const s = atob(b64), a = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+  return a;
+}
+
+// Rend une frame (1024 indices) en canvas 32×32 : palette + aplat sur BG +
+// overlay hachuré si status invalide (mêmes conventions que render_samples.py).
+function renderFrame(bytes, palette, status) {
+  const c = document.createElement("canvas");
+  c.width = 32; c.height = 32;
+  const ctx = c.getContext("2d");
+  const img = ctx.createImageData(32, 32);
+  for (let i = 0; i < 1024; i++) {
+    const idx = bytes[i];
+    let r, g, b;
+    if (idx === 0) { [r, g, b] = BG; }
+    else { const p = palette[idx]; r = p[0]; g = p[1]; b = p[2]; }
+    img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b;
+    img.data[i * 4 + 3] = 255;
+  }
+  if (status && status !== "valid") {
+    const [cr, cg, cb, ca] = STATUS_COLOR[status] || STATUS_COLOR.short;
+    const blend = (i) => {
+      img.data[i] = img.data[i] * (1 - ca) + cr * ca;
+      img.data[i + 1] = img.data[i + 1] * (1 - ca) + cg * ca;
+      img.data[i + 2] = img.data[i + 2] * (1 - ca) + cb * ca;
+    };
+    for (let x = 0; x < 32; x++) { blend(x * 4); blend((31 * 32 + x) * 4); }
+    for (let y = 0; y < 32; y++) { blend(y * 32 * 4); blend((y * 32 + 31) * 4); }
+    for (let k = 0; k < 32; k += 8)
+      for (let d = 0; d < 32; d++) blend((d * 32 + (k + d) % 32) * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+// Boucle d'animation globale synchronisée : tous les canvases enregistrés
+// affichent la frame (tick % n) — horloge partagée, cycles de longueurs ≠ ok.
+function animLoop() {
+  const interval = 1000 / fps;
+  let last = 0;
+  function step(t) {
+    if (playing && t - last >= interval) { tick++; last = t; drawAll(); }
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+function drawAll() {
+  for (const a of animRegistry) {
+    if (!a.frames.length) continue;
+    const f = a.frames[((tick % a.frames.length) + a.frames.length) % a.frames.length];
+    const ctx = a.canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 32, 32);
+    ctx.drawImage(f, 0, 0);
+  }
+  $("playInfo").textContent = playing ? `${fps} fps` : `pause — frame ${tick}`;
+}
+function registerAnim(canvas, frames) { animRegistry.push({ canvas, frames }); }
+function clearAnims() { animRegistry = []; }
+
+// ============================================================================
+// Mode ARENA
+// ============================================================================
+// Vote par axe INDÉPENDANT : chaque axe reçoit left/right/tie ; Entrée valide les
+// axes cochés + avance. Propreté sur home-row AZERTY (Q=A, S=égalité, D=B).
+const AXIS_CLEAN = { q: "left", s: "tie", d: "right" };
+let duel = null;            // {item, left, right, genL, genR}
+let axisVotes = {};         // {movement: 'left'|'right'|'tie', ...} (axes cochés seulement)
+let committing = false;
+let passDone = false;        // quota de duels atteint (toast une fois)
+let simpleVote = false;      // passe DPO : vote global aux flèches, pas d'axes
+
+async function loadNextDuel() {
+  clearAnims(); axisVotes = {}; renderAxisVote();
+  const m = await jget("/next_matchup");
+  if (m.error) { $("itemBar").innerHTML = `<span class="chip">${m.error}</span>`; return; }
+  const item = campaign.items.find(it => it.item_id === m.item_id);
+  const [genL, genR] = await Promise.all([
+    jget(`/gen?ckpt=${encodeURIComponent(m.left)}&item=${m.item_id}`),
+    jget(`/gen?ckpt=${encodeURIComponent(m.right)}&item=${m.item_id}`),
+  ]);
+  duel = { item, left: m.left, right: m.right, genL, genR, coverage: m.coverage };
+  renderDuel();
+  updateHeader();
+}
+
+function frameCanvases(gen, palette) {
+  return gen.frames.map((b64, i) =>
+    renderFrame(b64ToBytes(b64), palette, gen.statuses[i]));
+}
+
+function renderDuel() {
+  const { item, genL, genR } = duel;
+  const pal = item.palette;
+  $("itemBar").innerHTML = [
+    `<span class="chip">${item.item_id}</span>`,
+    `<span class="chip">action: <b>${item.action}</b></span>`,
+    item.direction ? `<span class="chip">dir: ${item.direction}</span>` : "",
+    `<span class="chip">N demandé: <b>${item.n_frames}</b></span>`,
+    `<span class="chip">${item.with_ref ? "avec ref" : "SANS ref (text-to-sprite)"}</span>`,
+  ].join("");
+  $("refBox").style.visibility = item.with_ref ? "visible" : "hidden";
+  if (item.with_ref) {
+    const rc = $("refCanvas"), ctx = rc.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(renderFrame(b64ToBytes(item.ref), pal, "valid"), 0, 0);
+  }
+  for (const [side, gen] of [["L", genL], ["R", genR]]) {
+    const frames = frameCanvases(gen, pal);
+    registerAnim($(`anim${side}`), frames);
+    const strip = $(`strip${side}`);
+    strip.innerHTML = "";
+    frames.forEach(c => strip.appendChild(cloneCanvas(c)));
+    const b = $(`badges${side}`);
+    const gap = gen.seqend_gap;
+    b.innerHTML = [
+      `<span class="badge ${gen.n_invalid ? "warn" : "ok"}">${gen.frames.length} frames, ${gen.n_valid} valid</span>`,
+      gap === null ? `<span class="badge bad">pas de SEQ_END (${gen.stop_reason})</span>`
+        : `<span class="badge ${gap === 0 ? "ok" : "warn"}">gap ${gap === 0 ? "exact" : (gap > 0 ? "+" : "") + gap}</span>`,
+    ].join("");
+  }
+  drawAll();
+}
+function cloneCanvas(src) {
+  const c = document.createElement("canvas");
+  c.width = src.width; c.height = src.height;
+  c.getContext("2d").drawImage(src, 0, 0);
+  return c;
+}
+
+function renderAxisVote() {
+  document.querySelectorAll(".axis-row").forEach(row => {
+    const v = axisVotes[row.dataset.axis];
+    row.querySelectorAll(".av").forEach(b => b.classList.toggle("sel", b.dataset.o === v));
+  });
+}
+function setAxis(axis, o) {
+  if (axisVotes[axis] === o) delete axisVotes[axis];   // re-clic = désélectionne
+  else axisVotes[axis] = o;
+  renderAxisVote();
+}
+
+async function sendVote(payload, label) {
+  if (!duel || committing) return;
+  committing = true;
+  await jpost("/vote", payload);
+  votes.push(payload);
+  toast(label + `   (A=${duel.left} · B=${duel.right})`);
+  committing = false;
+  updateHeader();
+  // Quota atteint : on STOPPE (pas de duel suivant, sinon on ressert des vus).
+  const target = campaign?.target_duels || 0;
+  const nArena = votes.filter(v => v.mode === "arena").length;
+  if (target > 0 && nArena >= target) { showPassDone(nArena, target); return; }
+  loadNextDuel();
+}
+function showPassDone(n, target) {
+  duel = null; clearAnims();
+  $("itemBar").innerHTML = `<span class="chip" style="font-size:15px">✓ Passe terminée — ${n}/${target} duels votés</span>`;
+  ["L", "R"].forEach(s => { $(`anim${s}`).getContext("2d").clearRect(0, 0, 32, 32); $(`strip${s}`).innerHTML = ""; $(`badges${s}`).innerHTML = ""; });
+  $("refBox").style.visibility = "hidden";
+  $("playInfo").textContent = "dis « fini » — le DPO peut être lancé sur cette passe";
+}
+function commitAxes() {
+  const axes = { ...axisVotes };
+  if (!Object.keys(axes).length) { toast("coche au moins un axe (ou X = les deux mauvais)"); return; }
+  const lab = Object.entries(axes).map(([a, o]) =>
+    `${a[0].toUpperCase()}=${o === "left" ? "A" : o === "right" ? "B" : "égal"}`).join("  ");
+  sendVote({ mode: "arena", item_id: duel.item.item_id, left: duel.left, right: duel.right, axes }, "voté  " + lab);
+}
+function commitBothBad() {
+  sendVote({ mode: "arena", item_id: duel.item.item_id, left: duel.left, right: duel.right, outcome: "both_bad" },
+           "les deux mauvais");
+}
+
+function commitGlobal(outcome) {
+  const who = outcome === "left" ? "◀ A" : outcome === "right" ? "B ▶" : "= égalité";
+  sendVote({ mode: "arena", item_id: duel.item.item_id, left: duel.left, right: duel.right, outcome },
+           "voté  " + who);
+}
+
+function arenaKeys(e) {
+  const k = e.key.toLowerCase();
+  const dir = k === "arrowleft" ? "left" : k === "arrowright" ? "right" : k === "arrowdown" ? "tie" : null;
+  if (simpleVote) {                       // passe DPO : flèche = vote global + avance
+    if (dir) { e.preventDefault(); commitGlobal(dir); return; }
+    if (k === "x") { commitBothBad(); return; }
+    return;
+  }
+  if (dir) { e.preventDefault(); setAxis("movement", dir); return; }
+  if (k in AXIS_CLEAN) { setAxis("cleanliness", AXIS_CLEAN[k]); return; }
+  if (k === "enter") { e.preventDefault(); commitAxes(); return; }
+  if (k === "x") { commitBothBad(); return; }
+  if (k === "escape") { axisVotes = {}; renderAxisVote(); return; }
+}
+
+// ============================================================================
+// Mode PLANCHE — validation éclair par batch
+// ============================================================================
+const PLANK_COLS = 6, PLANK_ROWS = 4, PLANK_PAGE = PLANK_COLS * PLANK_ROWS;
+let plankCkpt = null, plankPage = 0, plankSel = 0, plankStatic = false;
+let plankGens = {};          // item_id -> gen (du ckpt courant)
+let plankLocal = {};         // item_id -> {rating, flag} (votes déjà postés, du ckpt courant)
+
+function plankItems() {
+  const start = plankPage * PLANK_PAGE;
+  return campaign.items.slice(start, start + PLANK_PAGE);
+}
+
+async function loadPlank() {
+  clearAnims();
+  plankGens = {}; plankLocal = {};
+  for (const v of votes)
+    if (v.mode === "plank" && v.ckpt === plankCkpt)
+      plankLocal[v.item_id] = { rating: v.rating, flag: !!v.flag,
+                                individual: !!v.individual };
+  const items = plankItems();
+  const gens = await Promise.all(items.map(it =>
+    jget(`/gen?ckpt=${encodeURIComponent(plankCkpt)}&item=${it.item_id}`)));
+  items.forEach((it, i) => plankGens[it.item_id] = gens[i]);
+  renderPlank();
+}
+
+function renderPlank() {
+  clearAnims();
+  const grid = $("plankGrid");
+  grid.innerHTML = "";
+  const items = plankItems();
+  items.forEach((it, i) => {
+    const gen = plankGens[it.item_id];
+    const cell = document.createElement("div");
+    cell.className = "cell" + (i === plankSel ? " selected" : "")
+      + (plankLocal[it.item_id]?.flag ? " flagged" : "");
+    const frames = frameCanvases(gen, it.palette);
+    if (plankStatic) {
+      // vue statique : mini-bande de toutes les frames
+      const strip = document.createElement("div");
+      strip.className = "strip";
+      frames.forEach(f => { const c = cloneCanvas(f); c.style.width = "40px";
+                            c.style.height = "40px"; strip.appendChild(c); });
+      cell.appendChild(strip);
+    } else {
+      const cv = document.createElement("canvas");
+      cv.width = 32; cv.height = 32;
+      cell.appendChild(cv);
+      registerAnim(cv, frames);
+    }
+    const loc = plankLocal[it.item_id];
+    const mark = loc?.flag ? `<span class="mark flag">✖</span>`
+      : (loc?.rating ? `<span class="mark rate">${loc.rating}</span>` : "");
+    cell.insertAdjacentHTML("beforeend",
+      `${mark}<div class="lbl">${it.item_id} · ${it.action} · N=${it.n_frames}` +
+      `${it.with_ref ? "" : " · <b>no-ref</b>"}</div>`);
+    cell.onclick = () => { plankSel = i; renderPlank(); };
+    cell.ondblclick = () => showPlankDetail(it);
+    grid.appendChild(cell);
+  });
+  const nPages = Math.ceil(campaign.items.length / PLANK_PAGE);
+  $("plankPage").textContent = plankPage + 1;
+  $("plankPages").textContent = nPages;
+  const rated = Object.keys(plankLocal).length;
+  $("plankStatus").textContent =
+    `${rated}/${campaign.items.length} items notés sur ${plankCkpt}`;
+  drawAll();
+}
+
+async function plankVote(itemId, rating, flag, individual = false) {
+  const payload = { mode: "plank", ckpt: plankCkpt, item_id: itemId,
+                    rating: rating ?? null, flag: !!flag, individual };
+  await jpost("/vote", payload);
+  votes.push(payload);
+  plankLocal[itemId] = { rating, flag: !!flag, individual };
+}
+
+// Note toute la planche visible d'un coup — les cellules déjà overridées
+// (flag ou note individuelle posée APRÈS la dernière note de planche) gardent
+// leur valeur : on ne poste que pour les cellules sans override.
+async function ratePlank(rating) {
+  const items = plankItems();
+  let n = 0;
+  for (const it of items) {
+    const loc = plankLocal[it.item_id];
+    if (loc && (loc.flag || loc.individual)) continue;
+    await plankVote(it.item_id, rating, false, false);
+    n++;
+  }
+  toast(`planche notée ${rating}/5 (${n} items, overrides conservés)`);
+  renderPlank();
+  updateHeader();
+}
+
+function showPlankDetail(it) {
+  const gen = plankGens[it.item_id];
+  const d = $("plankDetail");
+  d.classList.remove("hidden");
+  d.innerHTML = `<b>${it.item_id}</b> — ${it.action}` +
+    `${it.direction ? " / " + it.direction : ""}, N demandé ${it.n_frames}, ` +
+    `${it.with_ref ? "avec ref" : "no-ref"} — ${gen.frames.length} frames générées, ` +
+    `${gen.n_valid} valid, stop=${gen.stop_reason}, gap=${gen.seqend_gap ?? "∅"}` +
+    `<div style="display:flex;gap:20px;margin-top:10px;align-items:flex-start">` +
+    `<div><div class="note">anim</div><canvas id="detailAnim" class="anim" width="32" height="32" ` +
+    `style="width:192px;height:192px"></canvas></div>` +
+    `<div style="flex:1"><div class="note">frames déroulées${it.with_ref ? " (1ʳᵉ vignette = ref)" : ""}</div>` +
+    `<div class="strip" id="detailStrip" style="justify-content:flex-start"></div></div></div>`;
+  const frames = frameCanvases(gen, it.palette);
+  registerAnim($("detailAnim"), frames);
+  const strip = $("detailStrip");
+  if (it.with_ref) {
+    const rc = renderFrame(b64ToBytes(it.ref), it.palette, "valid");
+    rc.style.outline = "2px solid var(--accent)";
+    strip.appendChild(rc);
+  }
+  frames.forEach(f => strip.appendChild(cloneCanvas(f)));
+  drawAll();
+}
+
+function plankKeys(e) {
+  const k = e.key;
+  const items = plankItems();
+  const sel = items[plankSel];
+  if (k === "ArrowRight") { plankSel = Math.min(plankSel + 1, items.length - 1); renderPlank(); e.preventDefault(); return; }
+  if (k === "ArrowLeft")  { plankSel = Math.max(plankSel - 1, 0); renderPlank(); e.preventDefault(); return; }
+  if (k === "ArrowDown")  { plankSel = Math.min(plankSel + PLANK_COLS, items.length - 1); renderPlank(); e.preventDefault(); return; }
+  if (k === "ArrowUp")    { plankSel = Math.max(plankSel - PLANK_COLS, 0); renderPlank(); e.preventDefault(); return; }
+  if (k.toLowerCase() === "n") { plankNextPage(1); return; }
+  if (k.toLowerCase() === "p") { plankNextPage(-1); return; }
+  if (k.toLowerCase() === "s") { plankStatic = !plankStatic; renderPlank(); return; }
+  if (k === "Enter" && sel) { showPlankDetail(sel); return; }
+  if (k.toLowerCase() === "x" && sel) {
+    const wasFlagged = plankLocal[sel.item_id]?.flag;
+    plankVote(sel.item_id, wasFlagged ? null : 1, !wasFlagged)
+      .then(() => { renderPlank(); updateHeader(); });
+    toast(wasFlagged ? `${sel.item_id} : flag retiré` : `${sel.item_id} flaggé outlier`);
+    return;
+  }
+  if (k.toLowerCase() === "a") { ratePlank(5); return; }
+  // Chiffres via e.code (touche physique) → indépendant du layout AZERTY/QWERTY.
+  // Sans Maj = note la planche entière ; avec Maj = note individuelle de la cellule.
+  const dm = /^(Digit|Numpad)([1-5])$/.exec(e.code);
+  if (dm) {
+    const r = parseInt(dm[2]);
+    if (e.shiftKey && sel) {
+      plankVote(sel.item_id, r, false, true).then(() => { renderPlank(); updateHeader(); });
+      toast(`${sel.item_id} noté ${r}/5 (override individuel)`);
+    } else {
+      ratePlank(r);
+    }
+  }
+}
+function plankNextPage(d) {
+  const nPages = Math.ceil(campaign.items.length / PLANK_PAGE);
+  plankPage = Math.min(Math.max(plankPage + d, 0), nPages - 1);
+  plankSel = 0;
+  $("plankDetail").classList.add("hidden");
+  loadPlank();
+}
+
+// ============================================================================
+// Mode RÉSULTATS
+// ============================================================================
+async function loadResults() {
+  const body = $("resultsBody");
+  body.innerHTML = "chargement…";
+  try {
+    await renderResults(body);
+  } catch (err) {
+    body.innerHTML = `<p class="note" style="color:#f08080">erreur rendu résultats : ${err.message}</p>`;
+    console.error(err);
+  }
+}
+async function renderResults(body) {
+  const r = await jget("/results.json");
+  const axisNames = { movement: "Mouvement", cleanliness: "Propreté",
+                      fidelity: "Fidélité à la réf", global: "Global (héritage)" };
+  let html = `<p class="note">${r.n_arena} duels arena, ` +
+    `${r.n_votes - r.n_arena} votes planche. Rating = 1500 + 400·log10(force BT), ` +
+    `IC 95 % bootstrap. Ancre <b>__dataset__</b> = ground truth.</p>`;
+  for (const [axis, label] of Object.entries(axisNames)) {
+    const a = r.axes[axis];
+    html += `<h2>${label}</h2>`;
+    if (!a || !a.ratings) { html += `<p class="note">aucun vote sur cet axe</p>`; continue; }
+    html += `<table><tr><th>#</th><th>checkpoint</th><th>rating</th><th>IC 95 %</th>` +
+      a.ranking.map(id => `<th>vs ${id}</th>`).join("") + `</tr>`;
+    a.ranking.forEach((id, rank) => {
+      html += `<tr><td>${rank + 1}</td><td class="name">${id}</td>` +
+        `<td><b>${a.ratings[id]}</b></td>` +
+        `<td class="note">[${a.ci95[id][0]} ; ${a.ci95[id][1]}]</td>`;
+      for (const opp of a.ranking) {
+        if (opp === id) { html += `<td>—</td>`; continue; }
+        const wr = a.winrate[id][opp], g = a.games[id][opp];
+        html += wr === null ? `<td class="note">∅</td>`
+          : `<td>${(wr * 100).toFixed(0)} % <span class="note">(${g})</span></td>`;
+      }
+      html += `</tr>`;
+    });
+    html += `</table>`;
+  }
+  html += `<h2>Notes de planches</h2><table><tr><th>checkpoint</th><th>note moyenne /5</th>` +
+    `<th>items notés</th><th>flags outliers</th><th>both_bad (arena)</th></tr>`;
+  for (const c of campaign.checkpoints) {
+    const p = (r.plank || {})[c.id] || {};
+    html += `<tr><td class="name">${c.id}</td><td>${p.mean_rating ?? "∅"}</td>` +
+      `<td>${p.n_votes ?? 0}</td><td>${p.n_flags ?? 0}</td>` +
+      `<td>${r.both_bad[c.id] ?? 0}</td></tr>`;
+  }
+  html += `</table>`;
+  html += `<h2>Breakdown global par tranche</h2>` +
+    `<p class="note">classement BT (sans IC) restreint aux duels de chaque tranche — ` +
+    `où un checkpoint gagne/perd.</p><table><tr><th>tranche</th><th>duels</th><th>classement</th></tr>`;
+  for (const [sl, a] of Object.entries(r.slices || {})) {
+    html += `<tr><td class="name">${sl}</td><td>${a.n_duels}</td>` +
+      `<td>${a.ranking ? a.ranking.map(id => `${id} (${a.ratings[id]})`).join(" › ") : "∅"}</td></tr>`;
+  }
+  html += `</table>`;
+  body.innerHTML = html;
+}
+
+// ============================================================================
+// Navigation, clavier global, init
+// ============================================================================
+function setMode(m) {
+  mode = m;
+  $("viewArena").classList.toggle("hidden", m !== "arena");
+  $("viewPlank").classList.toggle("hidden", m !== "plank");
+  $("viewResults").classList.toggle("hidden", m !== "results");
+  $("tabArena").classList.toggle("active", m === "arena");
+  $("tabPlank").classList.toggle("active", m === "plank");
+  $("tabResults").classList.toggle("active", m === "results");
+  clearAnims();
+  if (m === "arena") loadNextDuel();
+  if (m === "plank") loadPlank();
+  if (m === "results") loadResults();
+}
+
+function updateHeader() {
+  const nArena = votes.filter(v => v.mode === "arena").length;
+  const nPlank = votes.length - nArena;
+  const target = campaign?.target_duels || 0;
+  if (target > 0) {
+    $("voteCount").textContent =
+      nArena >= target ? `✓ passe terminée — ${nArena}/${target} duels`
+                       : `duel ${nArena}/${target}  ·  ${nPlank} planche`;
+    if (nArena >= target && !passDone) { passDone = true; toast(`Passe d'éval terminée : ${target} duels ✓`); }
+  } else {
+    $("voteCount").textContent = `${nArena} duels · ${nPlank} planche`;
+  }
+  if (duel?.coverage) {
+    const c = duel.coverage;
+    $("covBar").style.width =
+      `${Math.min(100, 100 * c.voted_cells / Math.max(1, c.total_cells))}%`;
+  }
+}
+
+async function undo() {
+  const r = await jpost("/undo", {});
+  if (!r.ok) { toast("rien à annuler"); return; }
+  votes.pop();
+  toast(`annulé : ${r.removed.mode} ${r.removed.item_id ?? ""}`);
+  updateHeader();
+  if (mode === "plank") loadPlank();
+}
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+  const k = e.key;
+  if (k === "F1") { setMode("arena"); e.preventDefault(); return; }
+  if (k === "F2") { setMode("plank"); e.preventDefault(); return; }
+  if (k === "F3") { setMode("results"); e.preventDefault(); return; }
+  if (k === " ") { playing = !playing; drawAll(); e.preventDefault(); return; }
+  if (k === ",") { playing = false; tick--; drawAll(); return; }
+  if (k === ".") { playing = false; tick++; drawAll(); return; }
+  if (k === "[") { fps = Math.max(1, fps - 1); drawAll(); return; }
+  if (k === "]") { fps = Math.min(30, fps + 1); drawAll(); return; }
+  if (k.toLowerCase() === "u") { undo(); return; }
+  if (mode === "arena") arenaKeys(e);
+  else if (mode === "plank") plankKeys(e);
+});
+
+document.querySelector(".axis-vote").addEventListener("click", e => {
+  const b = e.target.closest(".av"); if (!b) return;
+  setAxis(b.closest(".axis-row").dataset.axis, b.dataset.o);
+});
+$("tabArena").onclick = () => setMode("arena");
+$("tabPlank").onclick = () => setMode("plank");
+$("tabResults").onclick = () => setMode("results");
+$("plankPrev").onclick = () => plankNextPage(-1);
+$("plankNext").onclick = () => plankNextPage(1);
+$("plankCkpt").onchange = e => { plankCkpt = e.target.value; plankPage = 0; loadPlank(); };
+
+(async function init() {
+  campaign = await jget("/campaign.json");
+  votes = await jget("/votes.json");
+  // Passe DPO (same-model best-of-2) : vote simple global, on masque l'UI axes.
+  simpleVote = campaign.mode === "dpo_same_model";
+  if (simpleVote) {
+    document.querySelector(".axis-vote").style.display = "none";
+    document.querySelector("#viewArena .keyshelp").innerHTML =
+      "Passe DPO — quel tirage est le meilleur ? <kbd>←</kbd> A · <kbd>→</kbd> B · " +
+      "<kbd>↓</kbd> égalité · <kbd>X</kbd> les deux mauvais · <kbd>U</kbd> annuler · " +
+      "<kbd>Espace</kbd> pause · <kbd>,</kbd>/<kbd>.</kbd> frame · <kbd>[</kbd>/<kbd>]</kbd> vitesse";
+  }
+  $("campInfo").textContent =
+    `${campaign.name} · ${campaign.items.length} items · T=${campaign.temperature} · ` +
+    (simpleVote ? "passe DPO (best-of-2)" : campaign.checkpoints.map(c => c.id).join(" / "));
+  const sel = $("plankCkpt");
+  for (const c of campaign.checkpoints) {
+    const o = document.createElement("option");
+    o.value = c.id; o.textContent = c.id;
+    sel.appendChild(o);
+  }
+  plankCkpt = campaign.checkpoints.find(c => c.id !== "__dataset__")?.id
+    ?? campaign.checkpoints[0]?.id;
+  sel.value = plankCkpt;
+  updateHeader();
+  animLoop();
+  loadNextDuel();
+})();
+</script>
+</body>
+</html>

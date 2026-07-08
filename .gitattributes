@@ -1,0 +1,4 @@
+# Normalise les fins de ligne en LF dans le depot (checkout natif selon l'OS).
+* text=auto eol=lf
+*.png binary
+*.sqlite binary

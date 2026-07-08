@@ -1,0 +1,27 @@
+# --- Environnement / caches ---
+.venv/
+__pycache__/
+*.pyc
+.claude/
+
+# --- Donnees & datasets (regenerables, lourds) ---
+data/
+*.npz
+*.npy
+
+# --- Assets bruts (sprites telecharges, sqlite pokedex) : voir dataset_note.md ---
+assets/
+
+# --- Sorties d'entrainement (checkpoints, historiques, campagnes) ---
+runs/
+*.pt
+*.pth
+
+# --- Docs de travail internes (non publiees ; prod = HF + README) ---
+PROJECT.md
+sprite_gen_brief.md
+dataset_note.md
+
+# --- Divers ---
+*.tar.gz
+.DS_Store
