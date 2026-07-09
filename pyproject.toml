@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "pillow>=10.0",
     "numpy>=2.0",
+    "scipy>=1.13",
     "tqdm>=4.66",
     "scikit-learn>=1.4",
     "matplotlib>=3.8",

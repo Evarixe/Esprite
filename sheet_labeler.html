@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Sprite-sheet labeler</title>
+<style>
+  :root { --bg:#12151b; --panel:#1a1f28; --line:#2a323f; --accent:#4a9eff; --ok:#40c060; --sel:#ffb040; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:#d0d6de; font:13px/1.4 system-ui,sans-serif; }
+  header { padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:10; }
+  header b { color:#fff; } .muted { color:#7a828f; }
+  select, button { background:#232a35; color:#d0d6de; border:1px solid var(--line); border-radius:5px; padding:4px 8px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  button.primary { background:#1e3a5f; border-color:var(--accent); color:#fff; }
+  button.save { background:#1e4d2e; border-color:var(--ok); color:#fff; }
+  .wrap { display:flex; gap:12px; align-items:flex-start; padding:12px; }
+  .sheetscroll { flex:1 1 auto; min-width:0; max-height:calc(100vh - 80px); overflow:auto; border:1px solid var(--line); border-radius:4px; }
+  .sheetbox { position:relative; width:max-content; background:repeating-conic-gradient(#191c22 0% 25%, #14161b 0% 50%) 0/16px 16px; }
+  .sheetbox img { display:block; image-rendering:pixelated; }
+  .box { position:absolute; border:1px solid rgba(74,158,255,.35); cursor:pointer; }
+  .box:hover { border-color:var(--accent); background:rgba(74,158,255,.18); }
+  .box.used { border-color:rgba(64,192,96,.7); background:rgba(64,192,96,.20); }
+  .box.used::after { content:"✓"; position:absolute; top:-2px; right:1px; font-size:10px; color:#7fe0a0; }
+  .box.sel { border-color:var(--sel); background:rgba(255,176,64,.30); }
+  .box.sel.used { border-color:var(--sel); }
+  .side { flex:0 0 340px; position:sticky; top:52px; max-height:calc(100vh - 64px); overflow:auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:7px; padding:10px; margin-bottom:10px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  canvas { image-rendering:pixelated; background:#0c0e12; border:1px solid var(--line); border-radius:4px; vertical-align:middle; }
+  .cyc { display:flex; gap:8px; align-items:center; padding:6px; border-bottom:1px solid var(--line); }
+  .cyc .tag { font-weight:600; color:#fff; } .cyc .del { margin-left:auto; color:#e06060; cursor:pointer; }
+  kbd { background:#232a35; border:1px solid var(--line); border-radius:3px; padding:0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <b>Sprite-sheet labeler</b>
+  <span class="muted" id="stat">chargement…</span>
+  <label>zoom <select id="zoom"><option>2</option><option>3</option><option selected>4</option><option>6</option></select></label>
+  <span class="muted">clic = ajoute au cycle · <kbd>maj</kbd>+clic = range · clic rangée = toute la rangée</span>
+</header>
+<div class="wrap">
+  <div class="sheetscroll"><div class="sheetbox" id="sheetbox"><img id="img" src="/sheet.png"><div id="overlay"></div></div></div>
+  <div class="side">
+    <div class="card">
+      <div class="row">
+        <label>action <select id="action">
+          <option>walk</option><option>run</option><option>attack</option><option>cast</option>
+          <option>idle</option><option>hurt</option><option>dodge</option><option>victory</option>
+          <option>defeat</option><option>combat</option>
+        </select></label>
+        <label>dir <select id="dir"><option>down</option><option>right</option><option>left</option><option>up</option></select></label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="add">créer le cycle (sélection)</button>
+        <button id="clear">vider sélection</button>
+        <span class="muted" id="selcount">0 frame</span>
+      </div>
+      <div style="margin-top:8px"><canvas id="preview" height="64"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="row"><b>Cycles</b><span class="muted" id="cyccount">0</span>
+        <button class="save" id="save" style="margin-left:auto">enregistrer JSON</button></div>
+      <label style="display:block;margin:8px 0" title="A l'ingestion, chaque cycle left/right emet aussi sa direction opposee (flip horizontal). Sans effet sur up/down.">
+        <input type="checkbox" id="mirror"> miroir L↔R global (auto-génère la direction opposée pour les cycles left/right)</label>
+      <div id="cyclist"></div>
+    </div>
+  </div>
+</div>
+<script>
+let rows=[], boxes=[], sel=[], cycles=[], Z=4, img=null, lastIdx=-1;
+const $=id=>document.getElementById(id);
+
+async function init(){
+  img=$('img');   // MEME image pour l'affichage ET les canvas (source drawImage)
+  const m=await (await fetch('/boxes.json')).json();
+  rows=m.rows;
+  boxes=[]; rows.forEach((r,ri)=>r.forEach((b,ci)=>boxes.push({y0:b[0],x0:b[1],y1:b[2],x1:b[3],ri,ci,i:boxes.length})));
+  $('stat').textContent=`${boxes.length} frames · ${rows.length} rangées · ${m.sheet}`;
+  const ex=await (await fetch('/existing.json')).json();
+  if(ex&&ex.cycles){ cycles=ex.cycles;
+    if('mirror_lr' in ex) $('mirror').checked=!!ex.mirror_lr;
+    else if(cycles.some(c=>c.mirror)) $('mirror').checked=true;   // migration ancien format per-cycle
+    cycles.forEach(c=>delete c.mirror); }
+  const ready=()=>{ drawOverlay(); renderCycles(); };
+  if(img.complete && img.naturalWidth) ready(); else img.onload=ready;
+}
+const usedKeys=()=>{ const s=new Set(); cycles.forEach(cy=>cy.boxes.forEach(b=>s.add(b.join(',')))); return s; };
+function drawOverlay(){
+  Z=+$('zoom').value;
+  $('img').style.width=(img.naturalWidth*Z)+'px';
+  const ov=$('overlay'); ov.innerHTML=''; const used=usedKeys();
+  boxes.forEach(b=>{
+    const isUsed=used.has([b.y0,b.x0,b.y1,b.x1].join(','));
+    const d=document.createElement('div'); d.className='box'+(sel.includes(b.i)?' sel':'')+(isUsed?' used':'');
+    d.style.left=(b.x0*Z)+'px'; d.style.top=(b.y0*Z)+'px';
+    d.style.width=((b.x1-b.x0)*Z)+'px'; d.style.height=((b.y1-b.y0)*Z)+'px';
+    d.title=`rangée ${b.ri}, frame ${b.ci}`;
+    d.onclick=e=>{ e.altKey?selectRow(b.ri):toggle(b.i,e.shiftKey); };
+    ov.appendChild(d);
+  });
+}
+function toggle(i,range){
+  if(range&&lastIdx>=0){ const a=Math.min(lastIdx,i),z=Math.max(lastIdx,i); for(let k=a;k<=z;k++) if(!sel.includes(k)) sel.push(k); }
+  else { const p=sel.indexOf(i); p>=0?sel.splice(p,1):sel.push(i); }
+  lastIdx=i; sel.sort((a,b)=>a-b); refresh();
+}
+function selectRow(ri){ rows[ri].forEach((_,ci)=>{ const b=boxes.find(x=>x.ri===ri&&x.ci===ci); if(!sel.includes(b.i))sel.push(b.i); }); sel.sort((a,b)=>a-b); refresh(); }
+function refresh(){ drawOverlay(); $('selcount').textContent=sel.length+' frame'+(sel.length>1?'s':''); drawPreview(); }
+// Ancrage anti-jitter : bande verticale COMMUNE a toutes les frames du cycle (elles
+// partagent la meme ligne d'anim). Calee en bas (pieds stables), chaque frame gardant
+// sa position relative -> pas de sautillement, mouvement vertical preserve. Horizontal :
+// chaque frame centree sur sa propre largeur.
+function drawFrames(g, frames, S, gap){
+  if(!frames.length) return 0;
+  const vtop=Math.min(...frames.map(f=>f.y0)), vbot=Math.max(...frames.map(f=>f.y1));
+  const vh=Math.min(32, vbot-vtop);                 // bande commune (clamp 32)
+  frames.forEach((f,k)=>{ const w=f.x1-f.x0, h=f.y1-f.y0;
+    const x0=k*(32*S+gap)+Math.floor((32-w)/2)*S;
+    const y0=Math.max(0,(32-vh)+(f.y0-vtop))*S;      // bande bottom-alignee, offset relatif
+    g.drawImage(img,f.x0,f.y0,w,h,x0,y0,w*S,h*S); });
+  return frames.length*(32*S+gap);
+}
+function drawPreview(){
+  const c=$('preview'),g=c.getContext('2d');
+  const S=4, gap=2; c.width=Math.max(1,sel.length*(32*S+gap)); c.height=32*S;
+  g.imageSmoothingEnabled=false;   // APRES le resize : redimensionner un canvas reset le contexte (smoothing -> true)
+  g.clearRect(0,0,c.width,c.height);
+  drawFrames(g, sel.map(i=>boxes[i]), S, gap);
+}
+$('add').onclick=()=>{
+  if(!sel.length) return;
+  cycles.push({action:$('action').value,direction:$('dir').value,
+    boxes:sel.map(i=>{const b=boxes[i];return [b.y0,b.x0,b.y1,b.x1];})});
+  sel=[]; lastIdx=-1; refresh(); renderCycles();
+};
+$('clear').onclick=()=>{ sel=[]; lastIdx=-1; refresh(); };
+$('zoom').onchange=drawOverlay;
+function renderCycles(){
+  $('cyccount').textContent=cycles.length; const L=$('cyclist'); L.innerHTML='';
+  cycles.forEach((cy,idx)=>{
+    const row=document.createElement('div'); row.className='cyc';
+    const cv=document.createElement('canvas'); const S=2,gap=1; cv.width=cy.boxes.length*(32*S+gap); cv.height=32*S;
+    const g=cv.getContext('2d'); g.imageSmoothingEnabled=false;
+    drawFrames(g, cy.boxes.map(bb=>({y0:bb[0],x0:bb[1],y1:bb[2],x1:bb[3]})), S, gap);
+    const t=document.createElement('span'); t.className='tag';
+    t.textContent=`${cy.action}/${cy.direction} ·${cy.boxes.length}f`;
+    const del=document.createElement('span'); del.className='del'; del.textContent='✕';
+    del.onclick=()=>{cycles.splice(idx,1);renderCycles();drawOverlay();};
+    row.append(cv,t,del); L.appendChild(row);
+  });
+}
+$('save').onclick=async()=>{
+  const r=await (await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mirror_lr:$('mirror').checked,cycles})})).json();
+  $('stat').textContent=`enregistré ${r.cycles} cycles -> ${r.path}`;
+};
+init();
+</script>
+</body>
+</html>
