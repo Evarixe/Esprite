@@ -192,11 +192,12 @@ def parse_human_overworld(root: Path) -> Iterator[RawCycle]:
     """root = .../assets/human_Overworld_Sprites
 
     Layout par sheet (9 ou 10 cases de cell_w × H) :
-      case 0,1,2 = idle down/up/right ; 3,4 = walk down ; 5,6 = walk up ;
-      7,8 = walk right ; 9 = pose finale (victory), absente si 9 cases.
+      case 0,1,2 = idle down/up/left ; 3,4 = walk down ; 5,6 = walk up ;
+      7,8 = walk left ; 9 = pose finale (victory), absente si 9 cases.
+      (les cases orientees regardent a GAUCHE ; "right" est genere par miroir.)
 
     Cycles produits par perso :
-      - walk 4-frames : [idle_dir, walk_a, idle_dir, walk_b] pour down/up/right + left=miroir(right)
+      - walk 4-frames : [idle_dir, walk_a, idle_dir, walk_b] pour down/up/left + right=miroir(left)
         (la frame neutre intercalée entre chaque pas équilibre la démarche — convention GameFreak)
       - walk 2-frames : [walk_a, walk_b] (les deux pas seuls, sans idle intercalé).
         Donne au modèle le contraste walk@N=2 vs walk@N=4 → le nombre de frames devient
@@ -228,10 +229,13 @@ def parse_human_overworld(root: Path) -> Iterator[RawCycle]:
 
         name = fname[:-4]
         # walk 3-frames par direction. (idle_idx, walk_a, walk_b)
+        # NB : les cases 2/7/8 du sheet regardent a GAUCHE -> etiquetees "left"
+        # (bug historique : elles etaient labellees "right", inversant tout le
+        # conditionnement gauche/droite des personnages). "right" = miroir de "left".
         walk_layout = [
             ("down",  0, 3, 4),
             ("up",    1, 5, 6),
-            ("right", 2, 7, 8),
+            ("left",  2, 7, 8),
         ]
         for direction, i_idle, i_a, i_b in walk_layout:
             if max(i_idle, i_a, i_b) >= ncell:
@@ -246,12 +250,12 @@ def parse_human_overworld(root: Path) -> Iterator[RawCycle]:
                     "action": "human_walk", "direction": direction,
                     "variant": "normal", "gender": "regular",
                 })
-                # left = miroir horizontal de right
-                if direction == "right":
+                # right = miroir horizontal de left (les cases natives regardent a gauche)
+                if direction == "left":
                     mirrored = [f[:, ::-1].copy() for f in frames]
                     yield RawCycle(frames=mirrored, metadata={
                         "source": "human_overworld", "character": name,
-                        "action": "human_walk", "direction": "left",
+                        "action": "human_walk", "direction": "right",
                         "variant": "normal", "gender": "regular",
                     })
 
