@@ -18,6 +18,7 @@
   .badge.cooling { background: #102838; color: #50c0f0; border-color: #205a78; }
   .badge.stopping { background: #3a1010; color: #f08080; border-color: #6a2020; }
   .badge.live { background: #102a18; color: #80e0a0; border-color: #205040; }
+  .badge.idle { background: #20242c; color: #8b95a3; border-color: #333b47; }
   .controls { display: flex; gap: 8px; margin-left: auto; }
   button { background: #1f2530; color: #d6dae0; border: 1px solid #2f3947;
            padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
@@ -265,6 +266,10 @@ async function tick() {
   } else if (window.__cooling) {
     // pause thermique interne en cours — ne pas écraser par "running"
     btnPause.textContent = '⏸ Pause';
+  } else if (window.__hbStale !== false) {
+    // heartbeat périmé (ou absent) → aucun run actif : "idle", pas "running"
+    badge.className = 'badge idle';     badge.textContent = 'idle';
+    btnPause.textContent = '⏸ Pause';
   } else {
     badge.className = 'badge live';     badge.textContent = 'running';
     btnPause.textContent = '⏸ Pause';
@@ -353,6 +358,7 @@ setInterval(tick, POLL_MS);
 
 // ----- Heartbeat live (step, GPU) -----
 const HB_POLL_MS = 1000;
+window.__hbStale = true;   // idle par défaut tant qu'un heartbeat frais n'a pas été vu
 function fmtNum(v, digits=0) { return v == null ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: digits }); }
 function fmtFloat(v, d=3) { return v == null ? '—' : Number(v).toFixed(d); }
 
@@ -367,12 +373,14 @@ async function tickHeartbeat() {
   const bar = document.getElementById('live-bar');
   const pulse = document.getElementById('live-pulse');
   if (!hb) {
+    window.__hbStale = true;            // pas de heartbeat = aucun run actif
     bar.classList.add('stale');
     pulse.classList.add('stale');
     return;
   }
   const ageSec = (Date.now() / 1000) - hb.ts;
   const stale = ageSec > 5;
+  window.__hbStale = stale;             // lu par le badge de statut (running vs idle)
   bar.classList.toggle('stale', stale);
   pulse.classList.toggle('stale', stale);
 
