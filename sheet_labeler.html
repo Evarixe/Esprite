@@ -111,13 +111,22 @@ function refresh(){ drawOverlay(); $('selcount').textContent=sel.length+' frame'
 // partagent la meme ligne d'anim). Calee en bas (pieds stables), chaque frame gardant
 // sa position relative -> pas de sautillement, mouvement vertical preserve. Horizontal :
 // chaque frame centree sur sa propre largeur.
+const median=a=>{ const s=[...a].sort((x,y)=>x-y),m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2; };
 function drawFrames(g, frames, S, gap){
   if(!frames.length) return 0;
+  // VERTICAL : bande commune du cycle, bottom-alignee (pieds stables).
   const vtop=Math.min(...frames.map(f=>f.y0)), vbot=Math.max(...frames.map(f=>f.y1));
-  const vh=Math.min(32, vbot-vtop);                 // bande commune (clamp 32)
+  const vh=Math.min(32, vbot-vtop);
+  // HORIZONTAL : alignement par cellule. Pas de grille p = mediane des ecarts de centres ;
+  // on retire la foulee k*p -> le corps reste fixe, un membre qui s'ecarte depasse sans
+  // deplacer le corps (anti-jitter). d[k]=x0-k*p ; ref=mediane(d) ; frame centree sur ref.
+  const cx=frames.map(f=>(f.x0+f.x1)/2);
+  const p=frames.length>1 ? median(cx.slice(1).map((c,i)=>c-cx[i])) : 0;
+  const d=frames.map((f,k)=>f.x0 - k*p), ref=median(d);
+  const basePad=(32-median(frames.map(f=>f.x1-f.x0)))/2;
   frames.forEach((f,k)=>{ const w=f.x1-f.x0, h=f.y1-f.y0;
-    const x0=k*(32*S+gap)+Math.floor((32-w)/2)*S;
-    const y0=Math.max(0,(32-vh)+(f.y0-vtop))*S;      // bande bottom-alignee, offset relatif
+    const x0=(k*(32*S+gap)+basePad+(d[k]-ref))*S;
+    const y0=Math.max(0,(32-vh)+(f.y0-vtop))*S;
     g.drawImage(img,f.x0,f.y0,w,h,x0,y0,w*S,h*S); });
   return frames.length*(32*S+gap);
 }
