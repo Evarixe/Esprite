@@ -35,12 +35,16 @@
 <body>
 <header>
   <b>Sprite-sheet labeler</b>
+  <label>feuille <select id="sheetsel" style="max-width:280px"></select></label>
   <span class="muted" id="stat">chargement…</span>
   <label>zoom <select id="zoom"><option>2</option><option>3</option><option selected>4</option><option>6</option></select></label>
-  <span class="muted">clic = ajoute au cycle · <kbd>maj</kbd>+clic = range · clic rangée = toute la rangée</span>
+  <label title="dilatation avant labeling : 0 = sprites eclatent en morceaux, 2 = sprites serres fusionnent. Ajuste jusqu'a une boite par sprite.">dilate <input type="number" id="dilate" value="1" min="0" max="4" style="width:44px"></label>
+  <label title="taille max d'une boite (px) : ecarte le cartouche credit et les gros blobs fusionnes.">max px <input type="number" id="maxpx" value="64" min="16" max="128" style="width:52px"></label>
+  <button id="reseg">re-segmenter</button>
+  <span class="muted">clic = ajoute · <kbd>maj</kbd>+clic = range · <kbd>alt</kbd>+clic = rangée</span>
 </header>
 <div class="wrap">
-  <div class="sheetscroll"><div class="sheetbox" id="sheetbox"><img id="img" src="/sheet.png"><div id="overlay"></div></div></div>
+  <div class="sheetscroll"><div class="sheetbox" id="sheetbox"><img id="img"><div id="overlay"></div></div></div>
   <div class="side">
     <div class="card">
       <div class="row">
@@ -68,22 +72,38 @@
   </div>
 </div>
 <script>
-let rows=[], boxes=[], sel=[], cycles=[], Z=4, img=null, lastIdx=-1;
+let rows=[], boxes=[], sel=[], cycles=[], Z=4, img=null, lastIdx=-1, currentSheet=null;
 const $=id=>document.getElementById(id);
 
 async function init(){
   img=$('img');   // MEME image pour l'affichage ET les canvas (source drawImage)
-  const m=await (await fetch('/boxes.json')).json();
-  rows=m.rows;
-  boxes=[]; rows.forEach((r,ri)=>r.forEach((b,ci)=>boxes.push({y0:b[0],x0:b[1],y1:b[2],x1:b[3],ri,ci,i:boxes.length})));
-  $('stat').textContent=`${boxes.length} frames · ${rows.length} rangées · ${m.sheet}`;
-  const ex=await (await fetch('/existing.json')).json();
+  const sheets=await (await fetch('/sheets.json')).json();
+  const se=$('sheetsel');
+  se.innerHTML=sheets.map(s=>`<option value="${s.name}">${s.labeled?'✓ ':''}${s.name}</option>`).join('');
+  se.onchange=()=>loadSheet(se.value);
+  if(sheets.length) loadSheet(sheets[0].name);
+  else $('stat').textContent='aucune feuille *.png dans le dossier';
+}
+const boxesUrl=name=>`/boxes.json?name=${encodeURIComponent(name)}&dilate=${$('dilate').value}&max_px=${$('maxpx').value}`;
+function setBoxes(m){ rows=m.rows; boxes=[];
+  rows.forEach((r,ri)=>r.forEach((b,ci)=>boxes.push({y0:b[0],x0:b[1],y1:b[2],x1:b[3],ri,ci,i:boxes.length}))); }
+async function reseg(){ if(!currentSheet) return;
+  setBoxes(await (await fetch(boxesUrl(currentSheet))).json());
+  sel=[]; lastIdx=-1;
+  $('stat').textContent=`${boxes.length} frames · ${rows.length} rangées · ${currentSheet}`;
+  drawOverlay(); drawPreview();
+}
+async function loadSheet(name){
+  currentSheet=name; sel=[]; lastIdx=-1; cycles=[]; $('mirror').checked=false;
+  setBoxes(await (await fetch(boxesUrl(name))).json());
+  $('stat').textContent=`${boxes.length} frames · ${rows.length} rangées · ${name}`;
+  const ex=await (await fetch('/existing.json?name='+encodeURIComponent(name))).json();
   if(ex&&ex.cycles){ cycles=ex.cycles;
     if('mirror_lr' in ex) $('mirror').checked=!!ex.mirror_lr;
     else if(cycles.some(c=>c.mirror)) $('mirror').checked=true;   // migration ancien format per-cycle
     cycles.forEach(c=>delete c.mirror); }
-  const ready=()=>{ drawOverlay(); renderCycles(); };
-  if(img.complete && img.naturalWidth) ready(); else img.onload=ready;
+  img.onload=()=>{ drawOverlay(); renderCycles(); };
+  img.src='/sheet.png?name='+encodeURIComponent(name);
 }
 const usedKeys=()=>{ const s=new Set(); cycles.forEach(cy=>cy.boxes.forEach(b=>s.add(b.join(',')))); return s; };
 function drawOverlay(){
@@ -145,6 +165,7 @@ $('add').onclick=()=>{
 };
 $('clear').onclick=()=>{ sel=[]; lastIdx=-1; refresh(); };
 $('zoom').onchange=drawOverlay;
+$('reseg').onclick=reseg;
 function renderCycles(){
   $('cyccount').textContent=cycles.length; const L=$('cyclist'); L.innerHTML='';
   cycles.forEach((cy,idx)=>{
@@ -160,8 +181,10 @@ function renderCycles(){
   });
 }
 $('save').onclick=async()=>{
-  const r=await (await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mirror_lr:$('mirror').checked,cycles})})).json();
+  const r=await (await fetch('/save?name='+encodeURIComponent(currentSheet),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mirror_lr:$('mirror').checked,cycles})})).json();
   $('stat').textContent=`enregistré ${r.cycles} cycles -> ${r.path}`;
+  const opt=[...$('sheetsel').options].find(o=>o.value===currentSheet);
+  if(opt && !opt.text.startsWith('✓')) opt.text='✓ '+opt.text;
 };
 init();
 </script>

@@ -53,11 +53,15 @@ def load_rgba(path: str | Path) -> np.ndarray:
 
 def foreground_mask(sheet: np.ndarray, bg_tol: int = 16) -> np.ndarray:
     """Masque booleen du foreground. Fond transparent (alpha=0) -> alpha>0. Sinon
-    (sheet opaque) -> pixels != couleur du coin (0,0) au-dela de bg_tol."""
+    (sheet opaque RGB) -> pixels != couleur de FOND, estimee comme la couleur la plus
+    frequente (mode) et non le coin : le coin est peu fiable (cf sheets TSR ou le coin
+    differe du fond). Les sprites sont epars, donc le mode = le fond."""
     alpha = sheet[..., 3]
     if alpha.max() > 0 and alpha.min() == 0:
         return alpha > 0
-    bg = sheet[0, 0, :3].astype(int)
+    flat = sheet[..., :3].reshape(-1, 3)
+    uniq, cnt = np.unique(flat, axis=0, return_counts=True)
+    bg = uniq[cnt.argmax()].astype(int)
     return np.any(np.abs(sheet[..., :3].astype(int) - bg) > bg_tol, axis=2)
 
 

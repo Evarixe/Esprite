@@ -1,19 +1,21 @@
-"""Serveur du labeler de sprite-sheets (l'humain groupe en cycles + tague).
+"""Serveur du labeler de sprite-sheets (mode dossier : l'humain choisit la feuille).
 
-Plomberie deterministe : segmente le sheet (sheet_segment, scipy), sert le PNG + les
-bounding-boxes, et l'UI HTML. L'utilisateur assemble les frames en cycles et choisit
-action/direction ; le POST /save ecrit un manifeste JSON que l'ingestion relit. Claude
-n'intervient jamais dans le jugement visuel (cf memoire dataset-enrichment).
+Plomberie deterministe : segmente chaque feuille (sheet_segment, scipy), sert le PNG +
+les bounding-boxes, et l'UI HTML avec un selecteur de feuille. L'utilisateur assemble les
+frames en cycles et tague action/direction ; POST /save ecrit un manifeste JSON PAR FEUILLE
+(<out-dir>/<nom>.json) que l'ingestion relit. Claude n'intervient jamais dans le jugement
+visuel (cf memoire dataset-enrichment).
 
 Usage :
     set PYTHONPATH=src
-    uv run python -m dataset.sheet_labeler --sheet runs/tsr/link_cap.png --out data/labels/link_cap.json --port 8767
+    uv run python -m dataset.sheet_labeler --sheets-dir runs/tsr --out-dir data/labels --port 8767
 """
 from __future__ import annotations
 import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 
 from .sheet_segment import segment_sheet, cluster_rows
 
@@ -22,16 +24,36 @@ HTML = Path(__file__).resolve().parents[2] / "sheet_labeler.html"
 
 def build_manifest_stub(sheet: Path, boxes) -> dict:
     rows = cluster_rows(boxes)
-    return {
-        "sheet": str(sheet),
-        "rows": [[[b.y0, b.x0, b.y1, b.x1] for b in row] for row in rows],
-    }
+    return {"sheet": str(sheet),
+            "rows": [[[b.y0, b.x0, b.y1, b.x1] for b in row] for row in rows]}
 
 
-def make_handler(sheet: Path, out: Path, dilate: int, min_px: int, max_px: int):
-    boxes = segment_sheet(sheet, dilate=dilate, min_px=min_px, max_px=max_px)
-    manifest = build_manifest_stub(sheet, boxes)
-    sheet_bytes = sheet.read_bytes()
+def make_handler(sheets_dir: Path, out_dir: Path, seg: dict):
+    sheets = sorted(p.name for p in sheets_dir.glob("*.png"))
+    png_cache: dict[str, bytes] = {}
+    seg_cache: dict[tuple, dict] = {}   # (name, dilate, min_px, max_px) -> manifest
+
+    def label_path(name: str) -> Path:
+        return out_dir / (Path(name).stem + ".json")
+
+    def png(name: str) -> bytes:
+        if name not in png_cache:
+            png_cache[name] = (sheets_dir / name).read_bytes()
+        return png_cache[name]
+
+    def manifest(name: str, dilate: int, min_px: int, max_px: int) -> dict:
+        key = (name, dilate, min_px, max_px)
+        if key not in seg_cache:
+            path = sheets_dir / name
+            boxes = segment_sheet(path, dilate=dilate, min_px=min_px, max_px=max_px)
+            seg_cache[key] = build_manifest_stub(path, boxes)
+        return seg_cache[key]
+
+    def qint(q, k, d):
+        try:
+            return int(q.get(k, [d])[0])
+        except (TypeError, ValueError):
+            return d
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -45,50 +67,65 @@ def make_handler(sheet: Path, out: Path, dilate: int, min_px: int, max_px: int):
             self.end_headers()
             self.wfile.write(body)
 
+        def _name(self):
+            n = parse_qs(urlparse(self.path).query).get("name", [None])[0]
+            return n if n in sheets else None
+
         def do_GET(self):
-            if self.path in ("/", "/index.html"):
-                html = HTML.read_text(encoding="utf-8")
-                return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
-            if self.path == "/sheet.png":
-                return self._send(200, sheet_bytes, "image/png")
-            if self.path == "/boxes.json":
-                return self._send(200, json.dumps(manifest).encode("utf-8"), "application/json")
-            if self.path == "/existing.json":
-                data = out.read_bytes() if out.exists() else b"null"
-                return self._send(200, data, "application/json")
+            path = urlparse(self.path).path
+            if path in ("/", "/index.html"):
+                return self._send(200, HTML.read_text(encoding="utf-8").encode("utf-8"), "text/html; charset=utf-8")
+            if path == "/sheets.json":
+                lst = [{"name": s, "labeled": label_path(s).exists()} for s in sheets]
+                return self._send(200, json.dumps(lst).encode("utf-8"), "application/json")
+            name = self._name()
+            if path == "/sheet.png" and name:
+                return self._send(200, png(name), "image/png")
+            if path == "/boxes.json" and name:
+                q = parse_qs(urlparse(self.path).query)
+                m = manifest(name, qint(q, "dilate", seg["dilate"]),
+                             seg["min_px"], qint(q, "max_px", seg["max_px"]))
+                return self._send(200, json.dumps(m).encode("utf-8"), "application/json")
+            if path == "/existing.json" and name:
+                p = label_path(name)
+                return self._send(200, p.read_bytes() if p.exists() else b"null", "application/json")
             self.send_response(404); self.end_headers()
 
         def do_POST(self):
-            if self.path != "/save":
+            if urlparse(self.path).path != "/save":
                 self.send_response(404); self.end_headers(); return
+            name = self._name()
+            if not name:
+                return self._send(400, b'{"error":"unknown sheet"}', "application/json")
             n = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(n).decode("utf-8") if n else "{}"
             try:
-                payload = json.loads(body)
+                payload = json.loads(self.rfile.read(n).decode("utf-8") if n else "{}")
             except Exception:
                 return self._send(400, b'{"error":"bad json"}', "application/json")
-            out.parent.mkdir(parents=True, exist_ok=True)
-            payload["sheet"] = str(sheet)
-            out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            payload["sheet"] = str(sheets_dir / name)
+            label_path(name).write_text(json.dumps(payload, indent=2), encoding="utf-8")
             ncyc = len(payload.get("cycles", []))
-            return self._send(200, json.dumps({"ok": True, "cycles": ncyc, "path": str(out)}).encode(), "application/json")
+            return self._send(200, json.dumps({"ok": True, "cycles": ncyc, "path": str(label_path(name))}).encode(), "application/json")
 
     return H
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sheet", type=Path, required=True)
-    ap.add_argument("--out", type=Path, required=True, help="manifeste JSON de sortie")
+    ap.add_argument("--sheets-dir", type=Path, required=True, help="dossier de feuilles *.png")
+    ap.add_argument("--out-dir", type=Path, required=True, help="dossier des manifestes JSON (1 par feuille)")
     ap.add_argument("--port", type=int, default=8767)
-    ap.add_argument("--dilate", type=int, default=2)
+    ap.add_argument("--dilate", type=int, default=1)
     ap.add_argument("--min-px", type=int, default=8)
-    ap.add_argument("--max-px", type=int, default=40)
+    ap.add_argument("--max-px", type=int, default=64)
     args = ap.parse_args()
 
-    Handler = make_handler(args.sheet, args.out, args.dilate, args.min_px, args.max_px)
+    seg = {"dilate": args.dilate, "min_px": args.min_px, "max_px": args.max_px}
+    Handler = make_handler(args.sheets_dir, args.out_dir, seg)
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"[labeler] http://127.0.0.1:{args.port}/  sheet={args.sheet}  -> {args.out}")
+    n = len(sorted(args.sheets_dir.glob("*.png")))
+    print(f"[labeler] http://127.0.0.1:{args.port}/  {n} feuilles dans {args.sheets_dir} -> {args.out_dir}")
     print("[labeler] Ctrl+C pour arreter")
     try:
         srv.serve_forever()
