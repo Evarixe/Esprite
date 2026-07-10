@@ -81,11 +81,13 @@ class GraphSampler:
 
     @torch.no_grad()
     def prepare_from_prefix(self, prefix_tokens, prefix_roles, prefix_x, prefix_y,
-                            prefix_f) -> int:
+                            prefix_f, prefix_id=None, prefix_fam=None, prefix_col=None) -> int:
         """Lance un forward eager sur le préfixe (n'importe quelle longueur), copie
         les K/V dans les buffers statiques, ajuste le mask et pos_idx. Retourne
         la longueur du préfixe (= position où l'on va écrire le 1er token généré).
-        """
+
+        prefix_id/fam/col : side-channels de conditionnement descriptif v2 (embeddings
+        identite/famille/couleur injectes aux positions ID/COLOR du prefixe)."""
         device = self.device
         t = torch.tensor(prefix_tokens, dtype=torch.long, device=device).unsqueeze(0)
         x = torch.tensor(prefix_x,      dtype=torch.long, device=device).unsqueeze(0)
@@ -93,8 +95,12 @@ class GraphSampler:
         f = torch.tensor(prefix_f,      dtype=torch.long, device=device).unsqueeze(0)
         r = torch.tensor(prefix_roles,  dtype=torch.long, device=device).unsqueeze(0)
         L = t.shape[1]
+        idx = None if prefix_id is None else torch.tensor(prefix_id, dtype=torch.long, device=device).unsqueeze(0)
+        famx = None if prefix_fam is None else torch.tensor(prefix_fam, dtype=torch.long, device=device).unsqueeze(0)
+        colx = None if prefix_col is None else torch.tensor(prefix_col, dtype=torch.float32, device=device).unsqueeze(0)
 
-        _, kv_cache = self.model(t, x, y, f, r, attn_mask=None, return_cache=True)
+        _, kv_cache = self.model(t, x, y, f, r, attn_mask=None, id_index=idx,
+                                 family_index=famx, color_rgb=colx, return_cache=True)
 
         # Recopie dans les buffers statiques aux positions 0..L-1
         for i, (k, v) in enumerate(kv_cache):

@@ -25,11 +25,11 @@ import torch
 import torch.nn.functional as F
 
 from .vocab import (
-    ACTION_TOKEN, DIR_TOKEN, FRAMES_VAL, GEN_START, SEQ_END,
+    ACTION_TOKEN, DIR_TOKEN, GEN_START, SEQ_END, TAG_START, TAG_END, ID, COLOR,
     REF_START, REF_END, FRAME_SEP, PIXELS_PER_FRAME, SPRITE_SIZE,
-    REF_FRAME_INDEX, ROLE, MAX_FRAMES, VOCAB_SIZE, is_pixel_token,
+    REF_FRAME_INDEX, ROLE, MAX_FRAMES, VOCAB_SIZE, SOURCE_ACTION_MAP, is_pixel_token,
 )
-from .tokenize import _RASTER_X, _RASTER_Y
+from .tokenize import _RASTER_X, _RASTER_Y, _desc_tokens
 from .model import SpriteTransformer
 
 
@@ -37,13 +37,17 @@ from .model import SpriteTransformer
 class GenRequest:
     action: str = "idle"
     direction: str | None = None
-    frames: int = 8                   # cible (cap dur côté sécurité, voir max_frames_safety)
+    frames: int = 8                   # N (cible en prefixe ; cap dur = max_frames_safety)
     reference: np.ndarray | None = None
     temperature: float = 0.3
     seed: int | None = None
-    max_frames_safety: int = MAX_FRAMES  # cap dur sur le nombre de frames générées
-    token_budget_extra: int = 200     # tokens supplémentaires tolérés au-delà du strict
-                                       # nécessaire (laisse la place à des trous structurels)
+    max_frames_safety: int = MAX_FRAMES
+    token_budget_extra: int = 200
+    # --- Conditionnement descriptif v2 (bloc TAG optionnel) ---
+    descriptors: dict | None = None   # game/kind/gender/types/stage/shiny (tokens auto-id)
+    identity_index: int | None = None # index d'identite (embedding)
+    family_index: int | None = None   # index de lignee (embedding famille)
+    colors_rgb: list | None = None    # 2-4 couleurs dominantes RGB (projection)
 
 
 @dataclass
@@ -78,34 +82,43 @@ def _sample_token(logits: torch.Tensor, temperature: float, rng: torch.Generator
     return int(torch.multinomial(probs, num_samples=1, generator=rng).item())
 
 
-def build_prefix(req: GenRequest) -> tuple[list[int], list[int], list[int], list[int], list[int], int]:
-    tokens, roles, xs, ys, fs = [], [], [], [], []
+def build_prefix(req: GenRequest):
+    """Construit le prefixe v2 : [action, dir, N] + (bloc TAG)? + (ref)? + GEN_START.
+    Retourne (tokens, roles, xs, ys, fs, id_index, family_index, color_rgb, gen_start_idx)."""
+    tokens, roles, xs, ys, fs, idi, fam, col = [], [], [], [], [], [], [], []
 
-    def add(t, role, x=0, y=0, f=0):
+    def add(t, role, x=0, y=0, f=0, id_i=0, fam_i=0, rgb=(0, 0, 0)):
         tokens.append(t); roles.append(role); xs.append(x); ys.append(y); fs.append(f)
+        idi.append(id_i); fam.append(fam_i); col.append(rgb)
 
-    add(ACTION_TOKEN[req.action], ROLE.PREFIX_NON_PIXEL)
-    if req.direction is not None:
-        add(DIR_TOKEN[req.direction], ROLE.PREFIX_NON_PIXEL)
-    add(FRAMES_VAL, ROLE.PREFIX_NON_PIXEL)
+    # coeur : action, dir (none si absent), N
+    add(ACTION_TOKEN[SOURCE_ACTION_MAP[req.action]], ROLE.PREFIX_NON_PIXEL)
+    add(DIR_TOKEN[req.direction if req.direction is not None else "none"], ROLE.PREFIX_NON_PIXEL)
     add(req.frames, ROLE.PREFIX_NON_PIXEL)
 
+    # bloc descriptif optionnel
+    desc = _desc_tokens(req.descriptors, req.colors_rgb, req.identity_index, req.family_index)
+    if desc:
+        add(TAG_START, ROLE.PREFIX_NON_PIXEL)
+        for tok, id_i, fam_i, rgb in desc:
+            add(tok, ROLE.PREFIX_NON_PIXEL, id_i=id_i, fam_i=fam_i, rgb=(rgb or (0, 0, 0)))
+        add(TAG_END, ROLE.PREFIX_NON_PIXEL)
+
+    # reference optionnelle
     if req.reference is not None:
         add(REF_START, ROLE.PREFIX_NON_PIXEL)
-        ref_flat = req.reference.reshape(-1).astype(int).tolist()
-        for k, pix in enumerate(ref_flat):
+        for k, pix in enumerate(req.reference.reshape(-1).astype(int).tolist()):
             add(pix, ROLE.PREFIX_PIXEL, x=int(_RASTER_X[k]), y=int(_RASTER_Y[k]), f=REF_FRAME_INDEX)
         add(REF_END, ROLE.PREFIX_NON_PIXEL)
 
     gen_start_idx = len(tokens)
     add(GEN_START, ROLE.PREFIX_NON_PIXEL)
-    return tokens, roles, xs, ys, fs, gen_start_idx
+    return tokens, roles, xs, ys, fs, idi, fam, col, gen_start_idx
 
 
-# Tokens interdits dans la zone de génération (ne devraient pas apparaître en sortie).
-_FORBIDDEN_IN_GEN = [GEN_START, REF_START, REF_END, FRAMES_VAL,
-                     # action et direction tags (22..35) interdits aussi
-                     *range(22, VOCAB_SIZE)]
+# Zone de génération : seuls pixels (0-15), FRAME_SEP et SEQ_END sont légitimes.
+_FORBIDDEN_IN_GEN = [t for t in range(VOCAB_SIZE)
+                     if not (is_pixel_token(t) or t == FRAME_SEP or t == SEQ_END)]
 
 
 def _parse_token_stream(tokens: list[int]) -> tuple[list[FrameResult], str]:
@@ -208,7 +221,8 @@ def generate(model: SpriteTransformer, req: GenRequest, device: str = "cuda",
     if req.seed is not None:
         gen.manual_seed(int(req.seed))
 
-    tokens, roles, xs, ys, fs, gen_start_idx = build_prefix(req)
+    tokens, roles, xs, ys, fs, idi, fam, col, gen_start_idx = build_prefix(req)
+    cond = (idi, fam, col)
     prefix_len = len(tokens)
     max_total_new_tokens = req.max_frames_safety * (PIXELS_PER_FRAME + 1) + req.token_budget_extra
 
@@ -218,16 +232,24 @@ def generate(model: SpriteTransformer, req: GenRequest, device: str = "cuda",
     )
 
     if pool is not None and can_use_graph:
-        return _generate_with_pool(model, req, tokens, roles, xs, ys, fs,
+        return _generate_with_pool(model, req, tokens, roles, xs, ys, fs, cond,
                                     prefix_len, max_total_new_tokens, gen, device,
                                     pool=pool, timings=timings)
     if can_use_graph:
-        return _generate_with_graph(model, req, tokens, roles, xs, ys, fs,
+        return _generate_with_graph(model, req, tokens, roles, xs, ys, fs, cond,
                                      prefix_len, max_total_new_tokens, gen, device,
                                      sampler=sampler, timings=timings)
-    return _generate_dynamic(model, req, tokens, roles, xs, ys, fs,
+    return _generate_dynamic(model, req, tokens, roles, xs, ys, fs, cond,
                               prefix_len, max_total_new_tokens, gen, device,
                               timings=timings)
+
+
+def _cond_tensors(cond, device):
+    """(id_index, family_index, color_rgb) listes -> tenseurs (1,T)/(1,T,3) pour le forward prefixe."""
+    idi, fam, col = cond
+    return (torch.tensor(idi, dtype=torch.long, device=device).unsqueeze(0),
+            torch.tensor(fam, dtype=torch.long, device=device).unsqueeze(0),
+            torch.tensor(col, dtype=torch.float32, device=device).unsqueeze(0))
 
 
 def _step_book_keeping(tok: int, current_frame_idx: int, pixel_in_current: int,
@@ -253,7 +275,7 @@ def _step_book_keeping(tok: int, current_frame_idx: int, pixel_in_current: int,
     return role_new, 0, 0, f_new, current_frame_idx, pixel_in_current, None
 
 
-def _generate_with_graph(model, req, tokens, roles, xs, ys, fs,
+def _generate_with_graph(model, req, tokens, roles, xs, ys, fs, cond,
                           prefix_len, max_total_new_tokens, gen, device,
                           sampler=None, timings: dict | None = None):
     import time
@@ -272,7 +294,7 @@ def _generate_with_graph(model, req, tokens, roles, xs, ys, fs,
                 "Augmenter max_len à la création."
             )
     sampler.reset()
-    sampler.prepare_from_prefix(tokens, roles, xs, ys, fs)
+    sampler.prepare_from_prefix(tokens, roles, xs, ys, fs, *cond)
     torch.cuda.synchronize()
     if timings is not None:
         timings["setup_prefix"] = timings.get("setup_prefix", 0.0) + (time.perf_counter() - t_setup)
@@ -295,7 +317,9 @@ def _generate_with_graph(model, req, tokens, roles, xs, ys, fs,
     y_tens = torch.tensor(ys,     dtype=torch.long, device=device).unsqueeze(0)
     f_tens = torch.tensor(fs,     dtype=torch.long, device=device).unsqueeze(0)
     r_tens = torch.tensor(roles,  dtype=torch.long, device=device).unsqueeze(0)
-    logits_prefix = model(t_tens, x_tens, y_tens, f_tens, r_tens, attn_mask=None)
+    id_t, fam_t, col_t = _cond_tensors(cond, device)
+    logits_prefix = model(t_tens, x_tens, y_tens, f_tens, r_tens, attn_mask=None,
+                          id_index=id_t, family_index=fam_t, color_rgb=col_t)
     last_logits = logits_prefix[0, -1].float()
     torch.cuda.synchronize()
     if timings is not None:
@@ -327,7 +351,7 @@ def _generate_with_graph(model, req, tokens, roles, xs, ys, fs,
     return _finalize(raw_emitted, stop_reason)
 
 
-def _generate_with_pool(model, req, tokens, roles, xs, ys, fs,
+def _generate_with_pool(model, req, tokens, roles, xs, ys, fs, cond,
                         prefix_len, max_total_new_tokens, gen, device,
                         pool, timings: dict | None = None):
     """Génération avec pool de buckets + promotion dynamique de graph.
@@ -344,7 +368,7 @@ def _generate_with_pool(model, req, tokens, roles, xs, ys, fs,
 
     t_setup = time.perf_counter()
     sampler.reset()
-    sampler.prepare_from_prefix(tokens, roles, xs, ys, fs)
+    sampler.prepare_from_prefix(tokens, roles, xs, ys, fs, *cond)
     if sampler.graph is None:
         sampler.capture()
     torch.cuda.synchronize()
@@ -358,7 +382,9 @@ def _generate_with_pool(model, req, tokens, roles, xs, ys, fs,
     y_tens = torch.tensor(ys,     dtype=torch.long, device=device).unsqueeze(0)
     f_tens = torch.tensor(fs,     dtype=torch.long, device=device).unsqueeze(0)
     r_tens = torch.tensor(roles,  dtype=torch.long, device=device).unsqueeze(0)
-    logits_prefix = model(t_tens, x_tens, y_tens, f_tens, r_tens, attn_mask=None)
+    id_t, fam_t, col_t = _cond_tensors(cond, device)
+    logits_prefix = model(t_tens, x_tens, y_tens, f_tens, r_tens, attn_mask=None,
+                          id_index=id_t, family_index=fam_t, color_rgb=col_t)
     last_logits = logits_prefix[0, -1].float()
     torch.cuda.synchronize()
     if timings is not None:
@@ -409,7 +435,7 @@ def _generate_with_pool(model, req, tokens, roles, xs, ys, fs,
     return _finalize(raw_emitted, stop_reason)
 
 
-def _generate_dynamic(model, req, tokens, roles, xs, ys, fs,
+def _generate_dynamic(model, req, tokens, roles, xs, ys, fs, cond,
                        prefix_len, max_total_new_tokens, gen, device,
                        timings: dict | None = None):
     """Fallback : path dynamique (concat KV cache) — utilisé si pas de CUDA ou
@@ -421,9 +447,11 @@ def _generate_dynamic(model, req, tokens, roles, xs, ys, fs,
     r_tens = torch.tensor(roles,  dtype=torch.long, device=device).unsqueeze(0)
     use_amp = (device == "cuda")
     ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if use_amp else _NullCtx()
+    id_t, fam_t, col_t = _cond_tensors(cond, device)
     with ctx:
         logits, kv_cache = model(t_tens, x_tens, y_tens, f_tens, r_tens,
-                                  attn_mask=None, return_cache=True)
+                                  attn_mask=None, id_index=id_t, family_index=fam_t,
+                                  color_rgb=col_t, return_cache=True)
     last_logits = logits[0, -1].float()
 
     raw_emitted: list[int] = []
