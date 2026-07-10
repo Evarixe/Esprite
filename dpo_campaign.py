@@ -142,7 +142,10 @@ def main():
     data = np.load(args.data / "dataset.npz")
     cycles_all, lengths, palettes = data["cycles"], data["lengths"], data["palettes"]
     meta = json.loads((args.data / "dataset.meta.json").read_text(encoding="utf-8"))
-    pool_idx = list(range(len(meta)))   # POOL COMPLET (tous splits)
+    # POOL = TRAIN uniquement : le DPO best-of-2 optimise sur ces items, il ne doit pas
+    # toucher le val (sinon le val n'est plus un indicateur propre). cf splits.py.
+    splits = json.loads((args.data / "splits.json").read_text(encoding="utf-8"))
+    pool_idx = list(splits["train"])
 
     shown = set()
     if args.ledger and args.ledger.exists():

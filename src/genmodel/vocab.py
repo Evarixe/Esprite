@@ -70,6 +70,8 @@ SOURCE_ACTION_MAP = {
     "human_walk":       "walk",      # sheets humains : cycles 3-frames idle->walk->walk
     "human_victory":    "victory",   # sheets humains : 2-frames idle->pose finale
 }
+# Sources a action DIRECTE (labels TSR deja au tag modele : walk/attack/cast/...) : identite.
+SOURCE_ACTION_MAP.update({a: a for a in ACTIONS})
 
 
 # --- Géométrie sprite ---

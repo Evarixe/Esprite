@@ -32,7 +32,7 @@ def main():
 
     splits = make_splits([c.metadata for c in cycles], seed=args.seed)
     save_splits(splits, args.out / "splits.json")
-    print(f"[pipeline] splits: train={len(splits['train'])} val={len(splits['val'])} eval={len(splits['eval'])}")
+    print(f"[pipeline] splits: train={len(splits['train'])} val={len(splits['val'])}")
 
 
 if __name__ == "__main__":

@@ -270,8 +270,12 @@ def parse_human_overworld(root: Path) -> Iterator[RawCycle]:
 
 # ---------- Orchestrateur ----------
 
-def iter_all_sources(assets_root: Path, max_anim_frames: int = 16) -> Iterator[RawCycle]:
-    """Itère tous les cycles bruts de toutes les sources retenues."""
+def iter_all_sources(assets_root: Path, max_anim_frames: int = 16,
+                     labels_dir: Path | None = None) -> Iterator[RawCycle]:
+    """Itère tous les cycles bruts de toutes les sources retenues.
+
+    labels_dir : dossier des manifestes du labeler (TSR). Defaut data/labels. Chaque
+    <feuille>.json est ingere via parse_tsr_labeled (frames ancrees 32x32, miroir L<->R)."""
     yield from parse_hgss_overworld(
         assets_root / "overworld" / "pokemon" / "overworld"
     )
@@ -285,3 +289,9 @@ def iter_all_sources(assets_root: Path, max_anim_frames: int = 16) -> Iterator[R
     yield from parse_human_overworld(
         assets_root / "human_Overworld_Sprites"
     )
+    # Sprite-sheets labelisees (TSR). source par jeu ; pour l'instant tout Minish Cap.
+    labels_dir = Path("data/labels") if labels_dir is None else labels_dir
+    if labels_dir.is_dir():
+        from .tsr_ingest import parse_tsr_labeled
+        for mf in sorted(labels_dir.glob("*.json")):
+            yield from parse_tsr_labeled(mf, source="tsr_zelda_minishcap")
