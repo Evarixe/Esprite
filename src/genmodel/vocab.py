@@ -1,45 +1,77 @@
-"""Vocabulaire du modèle génératif (36 tokens, voir brief Partie 2).
+"""Vocabulaire du modele generatif v2 (lignee from-scratch). Cf model_spec_v2.md.
 
-Layout :
-   0..15  : indices palette / valeurs numériques (double usage selon contexte)
-   16     : <FRAMES_VAL>           marqueur "le prochain token est un compteur de frames"
-   17     : <GEN_START>            début de la zone à générer
-   18     : <SEQ_END>              fin de séquence
-   19     : <REF_START>            début de l'image de référence
-   20     : <REF_END>              fin de l'image de référence
-   21     : <FRAME_SEP>             séparateur entre frames
-   22..31 : tags d'action (idle, walk, run, attack, cast, hurt, dodge, victory, defeat, combat)
-   32..35 : tags de direction (down, right, left, up)
+Principe : dans le bloc descriptif, chaque valeur d'attribut est un token AUTO-IDENTIFIANT
+(pokemon, creature, fire, stage3, male...) globalement unique -> pas de cles, pas de
+partage de tokens (les tags sont optionnels et en nombre variable, partager confondrait).
+Les 0-15 ne servent donc QUE de pixel ou de compteur N (position+role les distinguent).
 
-Au POC v1 seuls <action:idle>, <action:combat> et les 4 directions sont effectivement
-utilisés. Les autres tags d'action restent dans le vocab pour ne pas avoir à
-re-tokeniser quand v2 enrichira le dataset.
+`id` et `color` sont des tokens-marqueurs dont la valeur est un EMBEDDING injecte par le
+modele (table d'identite / projection RGB continue), pas un token -> vocab petit malgre
+des centaines d'identites et des couleurs continues.
+
+Format de sequence (cf spec) :
+  [action, dir, N]  (<TAG_START> desc-tokens... <TAG_END>)?  (<REF_START>...<REF_END>)?
+  <GEN_START> pixels <FRAME_SEP> pixels ... <SEQ_END>
+Plus de FRAMES_VAL (prefixe fixe, N positionnel). Plus de `combat` (Pokemon -> attack).
 """
 from __future__ import annotations
 from dataclasses import dataclass
 
-# --- Token IDs ---
+# --- Pixels / valeurs (0-15) : pixel OU compteur N (position+role) ---
 N_PALETTE = 16
 PIX_FIRST, PIX_LAST = 0, 15
 
-FRAMES_VAL  = 16
-GEN_START   = 17
-SEQ_END     = 18
-REF_START   = 19
-REF_END     = 20
-FRAME_SEP   = 21
+# --- Structurels (7) ---
+GEN_START = 16
+SEQ_END   = 17
+REF_START = 18
+REF_END   = 19
+FRAME_SEP = 20
+TAG_START = 21
+TAG_END   = 22
 
-ACTION_FIRST = 22
-ACTIONS = ["idle", "walk", "run", "attack", "cast",
-           "hurt", "dodge", "victory", "defeat", "combat"]
+# --- Actions (14) ---
+ACTION_FIRST = 23
+ACTIONS = ["idle", "walk", "run", "jump", "climb", "swim",
+           "attack", "shoot", "cast",
+           "guard", "dodge", "hurt", "defeat",
+           "victory"]
 ACTION_TOKEN = {name: ACTION_FIRST + i for i, name in enumerate(ACTIONS)}
 
-DIR_FIRST = 32
-DIRECTIONS = ["down", "right", "left", "up"]
+# --- Directions (5, avec 'none') ---
+DIR_FIRST = ACTION_FIRST + len(ACTIONS)   # 37
+DIRECTIONS = ["down", "right", "left", "up", "none"]
 DIR_TOKEN = {name: DIR_FIRST + i for i, name in enumerate(DIRECTIONS)}
 
-VOCAB_SIZE = 36
-assert DIR_FIRST + len(DIRECTIONS) == VOCAB_SIZE
+# --- Descripteurs auto-identifiants (bloc TAG) ---
+GAME_FIRST = DIR_FIRST + len(DIRECTIONS)  # 42
+GAMES = ["pokemon", "zelda", "mario"]                       # extensible
+GAME_TOKEN = {g: GAME_FIRST + i for i, g in enumerate(GAMES)}
+
+KIND_FIRST = GAME_FIRST + len(GAMES)      # 45
+KINDS = ["character", "creature"]
+KIND_TOKEN = {k: KIND_FIRST + i for i, k in enumerate(KINDS)}
+
+GENDER_FIRST = KIND_FIRST + len(KINDS)    # 47
+GENDERS = ["male", "female", "none"]
+GENDER_TOKEN = {g: GENDER_FIRST + i for i, g in enumerate(GENDERS)}
+
+TYPE_FIRST = GENDER_FIRST + len(GENDERS)  # 50
+TYPES = ["normal", "fire", "water", "grass", "electric", "ice", "fighting",
+         "poison", "ground", "flying", "psychic", "bug", "rock", "ghost",
+         "dragon", "dark", "steel", "fairy"]   # 18 (fairy garde la porte ouverte)
+TYPE_TOKEN = {t: TYPE_FIRST + i for i, t in enumerate(TYPES)}
+
+STAGE_FIRST = TYPE_FIRST + len(TYPES)     # 68
+STAGES = ["stage1", "stage2", "stage3", "mega"]
+STAGE_TOKEN = {s: STAGE_FIRST + i for i, s in enumerate(STAGES)}
+
+SHINY = STAGE_FIRST + len(STAGES)         # 72  (flag : present => shiny)
+ID    = SHINY + 1                         # 73  (marqueur, embedding identite)
+COLOR = ID + 1                            # 74  (marqueur, embedding couleur RGB)
+
+VOCAB_SIZE = COLOR + 1                     # 75
+assert VOCAB_SIZE == 75
 
 
 def is_pixel_token(t: int) -> bool:
@@ -47,47 +79,45 @@ def is_pixel_token(t: int) -> bool:
 
 
 def token_name(t: int) -> str:
-    if 0 <= t < N_PALETTE: return f"PIX({t})"
-    if t == FRAMES_VAL:    return "<FRAMES_VAL>"
-    if t == GEN_START:     return "<GEN_START>"
-    if t == SEQ_END:       return "<SEQ_END>"
-    if t == REF_START:     return "<REF_START>"
-    if t == REF_END:       return "<REF_END>"
-    if t == FRAME_SEP:     return "<FRAME_SEP>"
-    if ACTION_FIRST <= t < ACTION_FIRST + len(ACTIONS):
-        return f"<action:{ACTIONS[t - ACTION_FIRST]}>"
-    if DIR_FIRST <= t < DIR_FIRST + len(DIRECTIONS):
-        return f"<dir:{DIRECTIONS[t - DIR_FIRST]}>"
+    if 0 <= t < N_PALETTE: return f"VAL({t})"
+    singles = {GEN_START: "GEN_START", SEQ_END: "SEQ_END", REF_START: "REF_START",
+               REF_END: "REF_END", FRAME_SEP: "FRAME_SEP", TAG_START: "TAG_START",
+               TAG_END: "TAG_END", SHINY: "shiny", ID: "id", COLOR: "color"}
+    if t in singles: return f"<{singles[t]}>"
+    for first, names, pfx in ((ACTION_FIRST, ACTIONS, "action"), (DIR_FIRST, DIRECTIONS, "dir"),
+                              (GAME_FIRST, GAMES, "game"), (KIND_FIRST, KINDS, "kind"),
+                              (GENDER_FIRST, GENDERS, "gender"), (TYPE_FIRST, TYPES, "type"),
+                              (STAGE_FIRST, STAGES, "stage")):
+        if first <= t < first + len(names):
+            return f"<{pfx}:{names[t - first]}>"
     return f"<INVALID:{t}>"
 
 
-# --- Mapping action sources -> tags du vocabulaire ---
-# Notre dataset a 3 sources d'action ; le POC en regroupe 2 selon le brief.
+# --- Mapping action sources -> tags. `combat` supprime : Pokemon -> attack (geste agressif). ---
 SOURCE_ACTION_MAP = {
     "idle_overworld":   "idle",
-    "idle_combat":      "combat",
-    "animated_combat":  "combat",
-    "human_walk":       "walk",      # sheets humains : cycles 3-frames idle->walk->walk
-    "human_victory":    "victory",   # sheets humains : 2-frames idle->pose finale
+    "idle_combat":      "attack",
+    "animated_combat":  "attack",
+    "human_walk":       "walk",
+    "human_victory":    "victory",
 }
-# Sources a action DIRECTE (labels TSR deja au tag modele : walk/attack/cast/...) : identite.
-SOURCE_ACTION_MAP.update({a: a for a in ACTIONS})
+SOURCE_ACTION_MAP.update({a: a for a in ACTIONS})   # sources a action directe (TSR) : identite
 
 
-# --- Géométrie sprite ---
+# --- Geometrie sprite ---
 SPRITE_SIZE = 32
 PIXELS_PER_FRAME = SPRITE_SIZE * SPRITE_SIZE   # 1024
 MAX_FRAMES = 16
-REF_FRAME_INDEX = MAX_FRAMES                    # index 16 réservé pour l'image de référence
+REF_FRAME_INDEX = MAX_FRAMES                    # 16 : image de reference
 
 
 @dataclass(frozen=True)
 class TokenRole:
-    """Rôle d'une position dans la séquence — sert au masquage de loss et aux embeddings."""
-    PREFIX_NON_PIXEL = 0   # tags, FRAMES_VAL, valeur de N, REF_START/END, GEN_START (en pré-position)
-    PREFIX_PIXEL     = 1   # pixels de l'image de référence
-    CONTENT_PIXEL    = 2   # pixels des frames à générer
-    CONTENT_SEP      = 3   # FRAME_SEP / SEQ_END dans la zone de génération
+    """Role d'une position — masquage de loss + embeddings selectifs."""
+    PREFIX_NON_PIXEL = 0   # coeur (action/dir/N), bloc TAG, REF_START/END, GEN_START
+    PREFIX_PIXEL     = 1   # pixels de l'image de reference
+    CONTENT_PIXEL    = 2   # pixels des frames a generer
+    CONTENT_SEP      = 3   # FRAME_SEP / SEQ_END
 
 
 ROLE = TokenRole()

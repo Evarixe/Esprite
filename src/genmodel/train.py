@@ -115,8 +115,10 @@ def evaluate(model, loader, device, max_batches: int = 20) -> dict:
             roles = batch["roles"].to(device, non_blocking=True)
             attn  = batch["attn_mask"].to(device, non_blocking=True)
             lm    = batch["loss_mask"].to(device, non_blocking=True)
+            idi   = batch["id_index"].to(device, non_blocking=True)
+            crgb  = batch["color_rgb"].to(device, non_blocking=True)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                logits = model(tokens, x_pos, y_pos, f_pos, roles, attn)
+                logits = model(tokens, x_pos, y_pos, f_pos, roles, attn, id_index=idi, color_rgb=crgb)
             loss, info = next_token_ce(logits.float(), tokens, roles, lm, weights=NEUTRAL)
             bk = batch["buckets"][0]
             losses_by_bucket[bk].append(loss.item())
@@ -253,8 +255,11 @@ def main():
         w_end=args.w_end, w_ref=args.w_ref, w_ref_end=args.w_ref_end)
     print(f"[train] loss weights: {train_weights}")
 
-    model = SpriteTransformer().to(device)
-    print(f"[train] model params: {model.n_params/1e6:.2f}M")
+    # Registre d'identite -> taille de la table d'embedding id (spec v2).
+    reg_path = args.data / "identity_registry.json"
+    n_identities = len(json.loads(reg_path.read_text(encoding="utf-8"))) if reg_path.exists() else 1024
+    model = SpriteTransformer(n_identities=n_identities).to(device)
+    print(f"[train] model params: {model.n_params/1e6:.2f}M | {n_identities} identites")
     if args.resume is not None:
         state = torch.load(args.resume, map_location=device, weights_only=False)
         model.load_state_dict(state["model"])
@@ -325,13 +330,15 @@ def main():
         roles = batch["roles"].to(device, non_blocking=True)
         attn  = batch["attn_mask"].to(device, non_blocking=True)
         lm    = batch["loss_mask"].to(device, non_blocking=True)
+        idi   = batch["id_index"].to(device, non_blocking=True)
+        crgb  = batch["color_rgb"].to(device, non_blocking=True)
 
         # Gradient checkpointing seulement sur séquences longues (budget VRAM)
         model.set_grad_checkpoint(
             args.grad_ckpt_threshold > 0 and tokens.shape[1] >= args.grad_ckpt_threshold)
         t0 = time.time()
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            logits = model(tokens, x_pos, y_pos, f_pos, roles, attn)
+            logits = model(tokens, x_pos, y_pos, f_pos, roles, attn, id_index=idi, color_rgb=crgb)
         loss, info = next_token_ce(logits.float(), tokens, roles, lm, weights=train_weights)
 
         opt.zero_grad(set_to_none=True)

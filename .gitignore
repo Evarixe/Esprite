@@ -25,3 +25,4 @@ dataset_note.md
 # --- Divers ---
 *.tar.gz
 .DS_Store
+model_spec_v2.md

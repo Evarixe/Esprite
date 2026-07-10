@@ -5,6 +5,7 @@ Usage :
 """
 from __future__ import annotations
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from dataset.pipeline import run_pipeline
 from dataset.storage import save_dataset
 from dataset.splits import make_splits, save_splits
+from genmodel.attributes import build_identity_registry
 
 
 def main():
@@ -33,6 +35,10 @@ def main():
     splits = make_splits([c.metadata for c in cycles], seed=args.seed)
     save_splits(splits, args.out / "splits.json")
     print(f"[pipeline] splits: train={len(splits['train'])} val={len(splits['val'])}")
+
+    registry = build_identity_registry([c.metadata for c in cycles])
+    (args.out / "identity_registry.json").write_text(json.dumps(registry, indent=2), encoding="utf-8")
+    print(f"[pipeline] identity registry: {len(registry)} identites (dont __none__)")
 
 
 if __name__ == "__main__":
