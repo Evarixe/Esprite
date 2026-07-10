@@ -29,6 +29,7 @@ class EncodedSequence:
     y_pos: np.ndarray       # (T,) int8
     frame_pos: np.ndarray   # (T,) int8
     id_index: np.ndarray    # (T,) int32 : index d'identite aux positions ID (0 ailleurs)
+    family_index: np.ndarray # (T,) int32 : index de lignee (famille) aux positions ID
     color_rgb: np.ndarray   # (T,3) uint8 : RGB aux positions COLOR (0 ailleurs)
     gen_start_idx: int
 
@@ -42,34 +43,34 @@ _RASTER_Y = _YS.reshape(-1).astype(np.int8)
 _RASTER_X = _XS.reshape(-1).astype(np.int8)
 
 
-def _desc_tokens(descriptors: dict, colors_rgb, identity_index):
-    """Liste (token, id_index, rgb) du bloc descriptif, ordre canonique, truthful."""
+def _desc_tokens(descriptors: dict, colors_rgb, identity_index, family_index):
+    """Liste (token, id_index, family_index, rgb) du bloc descriptif, ordre canonique."""
     out = []
     d = descriptors or {}
-    if "game" in d:   out.append((GAME_TOKEN[d["game"]], 0, None))
-    if "kind" in d:   out.append((KIND_TOKEN[d["kind"]], 0, None))
-    if "gender" in d: out.append((GENDER_TOKEN[d["gender"]], 0, None))
-    for t in d.get("types", []): out.append((TYPE_TOKEN[t], 0, None))
-    if "stage" in d:  out.append((STAGE_TOKEN[d["stage"]], 0, None))
-    if d.get("shiny"): out.append((SHINY, 0, None))
-    if identity_index:  # not None and > 0 (0 = __none__)
-        out.append((ID, int(identity_index), None))
+    if "game" in d:   out.append((GAME_TOKEN[d["game"]], 0, 0, None))
+    if "kind" in d:   out.append((KIND_TOKEN[d["kind"]], 0, 0, None))
+    if "gender" in d: out.append((GENDER_TOKEN[d["gender"]], 0, 0, None))
+    for t in d.get("types", []): out.append((TYPE_TOKEN[t], 0, 0, None))
+    if "stage" in d:  out.append((STAGE_TOKEN[d["stage"]], 0, 0, None))
+    if d.get("shiny"): out.append((SHINY, 0, 0, None))
+    if identity_index or family_index:   # position ID porte id + famille (embeddings sommes)
+        out.append((ID, int(identity_index or 0), int(family_index or 0), None))
     for rgb in (colors_rgb or []):
-        out.append((COLOR, 0, tuple(int(c) for c in rgb)))
+        out.append((COLOR, 0, 0, tuple(int(c) for c in rgb)))
     return out
 
 
 def encode_cycle(cycle_frames: np.ndarray, length: int, action_source: str,
                  direction: str | None, ref_frame_32x32: np.ndarray | None,
                  descriptors: dict | None = None, colors_rgb=None,
-                 identity_index: int | None = None,
+                 identity_index: int | None = None, family_index: int | None = None,
                  drop_tags: bool = False) -> EncodedSequence:
     if length < 1:
         raise ValueError("length must be >= 1")
     action_tok = ACTION_TOKEN[SOURCE_ACTION_MAP[action_source]]
     dir_tok = DIR_TOKEN[direction if direction is not None else "none"]
 
-    desc = [] if drop_tags else _desc_tokens(descriptors, colors_rgb, identity_index)
+    desc = [] if drop_tags else _desc_tokens(descriptors, colors_rgb, identity_index, family_index)
     has_tags = len(desc) > 0
     has_ref = ref_frame_32x32 is not None
 
@@ -86,6 +87,7 @@ def encode_cycle(cycle_frames: np.ndarray, length: int, action_source: str,
     y_pos = np.zeros(total, np.int8)
     frame_pos = np.zeros(total, np.int8)
     id_index = np.zeros(total, np.int32)
+    family_index = np.zeros(total, np.int32)
     color_rgb = np.zeros((total, 3), np.uint8)
 
     p = 0
@@ -96,9 +98,10 @@ def encode_cycle(cycle_frames: np.ndarray, length: int, action_source: str,
     # bloc descriptif
     if has_tags:
         tokens[p] = TAG_START; roles[p] = ROLE.PREFIX_NON_PIXEL; p += 1
-        for tok, idx, rgb in desc:
+        for tok, idx, fam, rgb in desc:
             tokens[p] = tok; roles[p] = ROLE.PREFIX_NON_PIXEL
             if idx: id_index[p] = idx
+            if fam: family_index[p] = fam
             if rgb is not None: color_rgb[p] = rgb
             p += 1
         tokens[p] = TAG_END; roles[p] = ROLE.PREFIX_NON_PIXEL; p += 1
@@ -130,8 +133,8 @@ def encode_cycle(cycle_frames: np.ndarray, length: int, action_source: str,
     assert p == total, f"length mismatch {p} != {total}"
 
     return EncodedSequence(tokens=tokens, roles=roles, x_pos=x_pos, y_pos=y_pos,
-                           frame_pos=frame_pos, id_index=id_index, color_rgb=color_rgb,
-                           gen_start_idx=gen_start_idx)
+                           frame_pos=frame_pos, id_index=id_index, family_index=family_index,
+                           color_rgb=color_rgb, gen_start_idx=gen_start_idx)
 
 
 def make_loss_mask(seq: EncodedSequence) -> np.ndarray:

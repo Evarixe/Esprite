@@ -24,7 +24,7 @@ from torch.utils.data import Dataset, Sampler
 
 from .tokenize import encode_cycle, make_loss_mask
 from .vocab import MAX_FRAMES
-from .attributes import cycle_descriptors, identity_key
+from .attributes import cycle_descriptors, identity_key, family_key
 
 
 SHORT_BUCKET = "short"   # n_frames == 2
@@ -72,6 +72,8 @@ class CyclesTokenDataset(Dataset):
         # Registre d'identite (cle -> index d'embedding). 0 = __none__ si absent.
         reg_path = data_dir / "identity_registry.json"
         self.id_registry = json.loads(reg_path.read_text(encoding="utf-8")) if reg_path.exists() else {"__none__": 0}
+        fam_path = data_dir / "family_registry.json"
+        self.family_registry = json.loads(fam_path.read_text(encoding="utf-8")) if fam_path.exists() else {"__none__": 0}
 
         # Pré-calcul des buckets sur le split
         self.buckets: dict[str, list[int]] = {SHORT_BUCKET: [], LONG_BUCKET: []}
@@ -115,6 +117,7 @@ class CyclesTokenDataset(Dataset):
         descriptors = None if drop_tags else cycle_descriptors(meta)
         colors = None if drop_tags else dominant_colors(cycle_frames[:L], self.palettes[ci], self.n_colors)
         idx = 0 if drop_tags else self.id_registry.get(identity_key(meta) or "__none__", 0)
+        fam = 0 if drop_tags else self.family_registry.get(family_key(meta) or "__none__", 0)
 
         seq = encode_cycle(
             cycle_frames=cycle_frames,
@@ -125,6 +128,7 @@ class CyclesTokenDataset(Dataset):
             descriptors=descriptors,
             colors_rgb=colors,
             identity_index=idx,
+            family_index=fam,
             drop_tags=drop_tags,
         )
         loss_mask = make_loss_mask(seq)
@@ -137,6 +141,7 @@ class CyclesTokenDataset(Dataset):
             "frame_pos": torch.from_numpy(seq.frame_pos.astype(np.int64)),
             "roles": torch.from_numpy(seq.roles.astype(np.int64)),
             "id_index": torch.from_numpy(seq.id_index.astype(np.int64)),
+            "family_index": torch.from_numpy(seq.family_index.astype(np.int64)),
             "color_rgb": torch.from_numpy(seq.color_rgb.astype(np.float32)),
             "gen_start": seq.gen_start_idx,
             "bucket": self.bucket_of(local_i),
@@ -155,6 +160,7 @@ def collate_pad(batch: list[dict], pad_token_id: int = 0) -> dict:
     out_f         = torch.zeros((B, T), dtype=torch.long)
     out_roles     = torch.zeros((B, T), dtype=torch.long)
     out_id        = torch.zeros((B, T), dtype=torch.long)
+    out_fam       = torch.zeros((B, T), dtype=torch.long)
     out_color     = torch.zeros((B, T, 3), dtype=torch.float32)
     out_mask      = torch.zeros((B, T - 1), dtype=torch.int8)
     out_attn_mask = torch.zeros((B, T), dtype=torch.bool)   # True = position valide
@@ -167,6 +173,7 @@ def collate_pad(batch: list[dict], pad_token_id: int = 0) -> dict:
         out_f[i, :L]         = item["frame_pos"]
         out_roles[i, :L]     = item["roles"]
         out_id[i, :L]        = item["id_index"]
+        out_fam[i, :L]       = item["family_index"]
         out_color[i, :L]     = item["color_rgb"]
         out_mask[i, :L - 1]  = item["loss_mask"]
         out_attn_mask[i, :L] = True
@@ -175,7 +182,7 @@ def collate_pad(batch: list[dict], pad_token_id: int = 0) -> dict:
         "tokens": out_tokens,
         "x_pos": out_x, "y_pos": out_y, "frame_pos": out_f,
         "roles": out_roles,
-        "id_index": out_id, "color_rgb": out_color,
+        "id_index": out_id, "family_index": out_fam, "color_rgb": out_color,
         "loss_mask": out_mask,
         "attn_mask": out_attn_mask,
         "buckets": [b["bucket"] for b in batch],

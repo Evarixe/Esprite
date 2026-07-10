@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from dataset.pipeline import run_pipeline
 from dataset.storage import save_dataset
 from dataset.splits import make_splits, save_splits
-from genmodel.attributes import build_identity_registry
+from genmodel.attributes import build_identity_registry, build_family_registry
 
 
 def main():
@@ -36,9 +36,12 @@ def main():
     save_splits(splits, args.out / "splits.json")
     print(f"[pipeline] splits: train={len(splits['train'])} val={len(splits['val'])}")
 
-    registry = build_identity_registry([c.metadata for c in cycles])
+    metas = [c.metadata for c in cycles]
+    registry = build_identity_registry(metas)
     (args.out / "identity_registry.json").write_text(json.dumps(registry, indent=2), encoding="utf-8")
-    print(f"[pipeline] identity registry: {len(registry)} identites (dont __none__)")
+    families = build_family_registry(metas)
+    (args.out / "family_registry.json").write_text(json.dumps(families, indent=2), encoding="utf-8")
+    print(f"[pipeline] identity registry: {len(registry)} identites | family registry: {len(families)} lignees")
 
 
 if __name__ == "__main__":

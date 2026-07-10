@@ -208,7 +208,7 @@ class SpriteTransformer(nn.Module):
                  dim: int = 512, n_layers: int = 16, n_heads: int = 16,
                  ff_dim: int = 2048, max_seq_len: int = 18432,
                  sprite_size: int = SPRITE_SIZE, max_frames: int = MAX_FRAMES,
-                 n_identities: int = 1024):
+                 n_identities: int = 1024, n_families: int = 512):
         super().__init__()
         self.dim = dim
         self.max_seq_len = max_seq_len
@@ -219,9 +219,11 @@ class SpriteTransformer(nn.Module):
         self.y_emb     = nn.Embedding(sprite_size, dim)
         self.frame_emb = nn.Embedding(max_frames + 1, dim)  # +1 pour l'index 'ref'
         # Conditionnement descriptif hors vocab (spec v2) : identite (table apprise,
-        # index 0 = __none__) et couleur (projection RGB continue). Injectes aux
-        # positions des tokens-marqueurs ID / COLOR.
+        # index 0 = __none__), FAMILLE (lignee d'evolution partagee -> proximite entre
+        # Pokemon lies + degradation gracieuse pour les rares) et couleur (projection RGB).
+        # id_emb + family_emb sommes a la position ID ; color_proj a la position COLOR.
         self.id_emb     = nn.Embedding(n_identities, dim)
+        self.family_emb = nn.Embedding(n_families, dim)
         self.color_proj = nn.Linear(3, dim, bias=False)
 
         # Sinusoïdale (buffer non apprenable)
@@ -258,7 +260,7 @@ class SpriteTransformer(nn.Module):
             nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
     def embed(self, tokens, x_pos, y_pos, frame_pos, roles,
-              id_index=None, color_rgb=None, seq_offset: int = 0):
+              id_index=None, family_index=None, color_rgb=None, seq_offset: int = 0):
         """Compose les embeddings. x/y/frame uniquement pour rôles pixel ; identite et
         couleur injectees uniquement aux positions des tokens-marqueurs ID / COLOR.
 
@@ -276,7 +278,10 @@ class SpriteTransformer(nn.Module):
 
         if id_index is not None:
             is_id = (tokens == ID).unsqueeze(-1).to(h.dtype)
-            h = h + is_id * self.id_emb(id_index.clamp(min=0))
+            cond = self.id_emb(id_index.clamp(min=0))
+            if family_index is not None:
+                cond = cond + self.family_emb(family_index.clamp(min=0))
+            h = h + is_id * cond
         if color_rgb is not None:
             is_color = (tokens == COLOR).unsqueeze(-1).to(h.dtype)
             h = h + is_color * self.color_proj(color_rgb.to(h.dtype) / 255.0)
@@ -315,7 +320,7 @@ class SpriteTransformer(nn.Module):
         return self.head(h)
 
     def forward(self, tokens, x_pos, y_pos, frame_pos, roles, attn_mask,
-                id_index=None, color_rgb=None,
+                id_index=None, family_index=None, color_rgb=None,
                 kv_cache: list | None = None, seq_offset: int = 0,
                 return_cache: bool = False):
         """
@@ -331,7 +336,8 @@ class SpriteTransformer(nn.Module):
         positions ID/COLOR (cf embed). None en generation de contenu (pas de ces tokens).
         """
         h = self.embed(tokens, x_pos, y_pos, frame_pos, roles,
-                       id_index=id_index, color_rgb=color_rgb, seq_offset=seq_offset)
+                       id_index=id_index, family_index=family_index,
+                       color_rgb=color_rgb, seq_offset=seq_offset)
         new_cache: list | None = [] if (return_cache or kv_cache is not None) else None
         use_ckpt = self._grad_ckpt and self.training and kv_cache is None
         for i, blk in enumerate(self.blocks):

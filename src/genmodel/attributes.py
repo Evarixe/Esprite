@@ -96,6 +96,32 @@ def cycle_descriptors(meta: dict) -> dict:
     return d
 
 
+@functools.lru_cache(maxsize=4096)
+def _poke_family(species_id: int):
+    con = _con()
+    if con is None:
+        return None
+    r = con.execute("SELECT evolution_chain_id FROM pokemon_species WHERE id=?", (species_id,)).fetchone()
+    return r[0] if r else None
+
+
+def family_key(meta: dict) -> str | None:
+    """Cle de LIGNEE (chaine d'evolution veekun) -> embedding de famille partage. Donne
+    une proximite aux Pokemon d'une meme lignee meme si leurs numeros ne se suivent pas
+    (Pichu/Pikachu/Raichu), et une degradation gracieuse (rare -> profite de sa famille)."""
+    pid = meta.get("pokemon_id")
+    if pid is not None:
+        c = _poke_family(int(pid))
+        if c is not None:
+            return f"fam{c}"
+    return None
+
+
+def build_family_registry(metas: list[dict]) -> dict:
+    keys = sorted({k for m in metas if (k := family_key(m)) is not None})
+    return {"__none__": 0, **{k: i + 1 for i, k in enumerate(keys)}}
+
+
 def identity_key(meta: dict) -> str | None:
     pid = meta.get("pokemon_id")
     if pid is not None:
