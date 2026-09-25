@@ -252,4 +252,78 @@ une fusion d'actions dans le vocab.
 
 ## 4. Proposition
 
-_(à venir)_
+Principe directeur : Esprite est **limité par les données** (≈ 5 k cycles, < 1 token/param ;
+cf. Abra §2.6), pas par l'architecture. L'ordre des chantiers suit ce constat : **données
+d'abord**, puis corrections d'entraînement bon marché, puis refonte d'architecture une fois
+le volume de données connu, et DPO en dernier.
+
+### Phase 1 — Données (priorité absolue)
+
+1. **Ingestion PMD SpriteCollab** (`src/dataset/sources.py` → `parse_pmd_spritecollab`) :
+   - lire `AnimData.xml`, résoudre/dédupliquer les `CopyOf`, garder les lignes 0/2/4/6
+     (down/right/up/left) ; ignorer Offsets/Shadow ;
+   - découpe par FrameWidth/Height, **ancrage par cycle** (bbox d'union, calage bas, comme
+     `tsr_ingest.anchor_cycle`) ; 1:1 si l'union tient en 32, sinon 2:1 mode-par-bloc, sinon rejet ;
+   - > 16 frames → sous-échantillonnage uniforme (règle existante) ; palettes déjà ≤ 15 couleurs ;
+   - mapping d'actions §3.4 ; nom PMD d'origine conservé en méta (futur descripteur fin) ;
+   - descripteurs gratuits via le n° de dex (types, stade, famille, shiny, forme, genre) ;
+   - **exclure (ou isoler dans une source à part) les 666 jeux « CHUNSOFT »** ; garder
+     `credits.txt` pour l'attribution.
+   - Attendu : **~150 k cycles**, dont une majorité > 2 frames → le bucket « long » cesse
+     d'être anecdotique.
+2. **Splits par identité** (`src/dataset/splits.py`) : aujourd'hui le split est par cycle,
+   stratifié (action, source) ; avec PMD, shiny/directions/actions d'une même espèce
+   fuiraient entre train et val. Split par `identity_key` (ou par famille) pour la val.
+3. **LPC** pour les humanoïdes : d'abord **ElizaWy LPC Revised** (CC-BY/OGA-BY, licence la
+   plus sûre), puis compositeur ULPC filtré sur calques CC0/CC-BY/OGA-BY → run, climb, cast,
+   shoot, jump + identité cohérente entre actions ; 2:1 + quantification ≤ 15 couleurs.
+4. Appoint CC0 : **Ninja Adventure** (16×16, 1:1).
+5. Trous restants (**swim, guard, dodge**) : décider entre (a) fusion/abandon dans le vocab,
+   (b) synthèse via enseignants (LoRA svntax / Wan-Animate-2 → k-centroid → quantif → tri
+   humain dans l'arène existante).
+
+Après la phase 1, le rapport tokens/param passe d'≈ 1 à un ordre de grandeur de ~20
+(estimation grossière) : **le 50 M redevient raisonnable** ; ne pas réduire le modèle avant
+d'avoir les données.
+
+### Phase 2 — Correctifs d'entraînement bon marché (modèle actuel)
+
+6. **Bruitage du contexte** (In-Context Forcing / VideoAR Random Frame Mask) dans
+   `data.py`/`tokenize.py` : remplacer une fraction des pixels des frames précédentes (et
+   parfois de la ref) par une couleur aléatoire, taux plus fort sur t−1 ; la loss reste sur
+   les cibles propres. Vise la copie triviale, la dérive et le cold-start.
+7. **Curriculum de longueur** 2 → 4 → 16 frames (le sampler de buckets s'y prête).
+8. **Décodage spéculatif** dans `sample.py`/`graph_sampler.py` : brouillon = frame t−1 (ou
+   la ref pour la frame 0), vérification par blocs — sans perte, sans ré-entraînement.
+9. **Structure imposée à l'inférence** : N est dans le préfixe, donc forcer `FRAME_SEP`
+   après chaque 1024 pixels et `SEQ_END` après N frames (masque de logits) — supprime le
+   runaway sans toucher l'entraînement ; `w_sep`/`w_end` peuvent ensuite redescendre.
+
+### Phase 3 — Architecture v3 (une fois les données en place)
+
+10. **Hiérarchique global/local** (§2.7 option C) : gros transformer par patch 4×4
+    (séquence ÷16 : ~18 k → ~1,1 k), petit décodeur AR intra-patch (2–4 couches) —
+    vraisemblance exacte conservée (DPO inchangé), entraînement bien moins cher.
+11. **Flag KEEP par patch** pour t ≥ 1 (option D) : un patch inchangé = 1 token → la
+    redondance inter-frames devient explicite, gros gain sur idle/2-frames.
+12. Le spéculatif (8) reste compatible par-dessus. RoPE 3D relative : optionnel, basse priorité.
+13. Alternative à garder en réserve : diffusion discrète masquée (MDM, 4 bits/pixel
+    MDM-Prime-v2) si l'AR plafonne — changement de paradigme, DPO à adapter (ELBO).
+
+### Phase 4 — DPO
+
+14. **Paires synthétiques** type RealAlign dans `dpo.py` : gagnant = cycle réel, perdant =
+    même cycle dégradé (frame dupliquée/supprimée, boucle cassée, pixels orphelins, décalage
+    1 px, bruit de palette) — mélangées aux votes, jamais à leur place.
+15. **Paires à préfixe partagé** (AR-CoPO) dans `dpo_campaign.py` : les 2 seeds partagent les
+    frames 0..k ; logπ sur les tokens divergents seulement → moins de variance par vote.
+16. **Poly-DPO** (ViPO) comme remplacement de `dpo_loss` à tester en A/B (votes bruités).
+
+### Points de vigilance
+
+- **Licences** : PMD = CC BY-NC 4.0 + IP Pokémon + 666 jeux Chunsoft ; LPC = mix par calque
+  (SA/GPL à filtrer pour publier). Pour publier des checkpoints sur HF, prévoir une lignée
+  « publiable » (LPC Revised + CC0 + ULPC filtré) distincte de la lignée recherche.
+- Les dates des travaux 2026 ont été vérifiées via HF Papers (arXiv bloqué) : seuls les
+  résumés/débuts d'articles ont été lus ; les transpositions à Esprite sont des hypothèses
+  à valider par ablation.
