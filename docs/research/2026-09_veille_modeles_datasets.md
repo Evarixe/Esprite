@@ -61,7 +61,7 @@ discrète, DPO robuste, benchmarks d'animation).
 |---|---|---|---|---|
 | 1 | **svntax-dev** `pixel_spritesheet_4walk_small_lora_v1` / `…_4walk_combat_32x48_v1` — [HF](https://hf.co/svntax-dev/pixel_spritesheet_4walk_small_lora_v1), [HF](https://hf.co/svntax-dev/pixel_spritesheet_4walk_combat_32x48_v1) | 2026-02-01 / 2026-03-18 (dépôts) | LoRA FLUX.2-klein-4B puis Qwen-Image-Edit-2511 ; grilles 4×4 (walk×3 ×4 dirs, 32×32) et 6×4 (walk/attack/hurt, 32×48) ; downscale k-centroid ×4 ; mode *edit* : réf → sheet | L'analogue le plus proche (32 px, action×direction, réf). **Enseignant hors-ligne** pour synthétiser des cycles longs → k-centroid → quantif palette 16 → tri humain |
 | 2 | **Loopy** : seamless looping video — [arXiv 2608.23090](https://arxiv.org/abs/2608.23090), [projet](https://donghaotian123.github.io/Loopy) | 2026-08-24 (ACM TOG 45(6)) | DiT vidéo ; décalage de PE *par couche* (couche « ancre » dominante) → temps perçu circulaire ; RGBA ; note que forcer frame₀ = frame_N ⇒ vidéos quasi-statiques | **Encodage temporel circulaire** (angle 2π·t/N) pour les cycles ; méfiance vis-à-vis de l'effondrement statique (aussi en DPO) |
-| 3 | **PRA** — Parallel Rollout Approximation for pixel-space AR — [arXiv 2606.27978](https://arxiv.org/abs/2606.27978) | 2026-06-26 | AR direct sur patchs de pixels, sans tokenizer ; attaque (i) l'erreur par pas et (ii) l'exposure bias du teacher forcing en construisant en parallèle des entrées « type inférence » ; FID 1.94 (511 M) | Esprite = AR pixel-space en teacher forcing sur 18 k tokens → **corruption contrôlée du contexte** à l'entraînement (tokens remplacés par prédictions du modèle / couleurs voisines) contre la dérive des frames tardives et le cold-start |
+| 3 | **PRA** — Parallel Rollout Approximation for pixel-space AR — [arXiv 2606.27978](https://arxiv.org/abs/2606.27978) | 2026-06-26 | AR sur patchs 16×16 **continus** (tête rectified-flow, pas de tokens discrets) ; attaque (i) l'erreur par pas et (ii) l'exposure bias du teacher forcing en construisant en parallèle des entrées « type inférence » ; FID 1.94 (511 M) | Esprite = AR pixel-space en teacher forcing sur 18 k tokens → **corruption contrôlée du contexte** à l'entraînement (tokens remplacés par prédictions du modèle / couleurs voisines) contre la dérive des frames tardives et le cold-start |
 | 4 | **Nemotron-Labs-Diffusion-Image** — [arXiv 2606.29814](https://arxiv.org/abs/2606.29814) | 2026-06-29 | Diffusion discrète masquée T2I ; *édition* de tokens déjà démasqués ; **Grouped Cross-Entropy** (crédit aux tokens voisins dans l'espace d'embedding) | (a) alternative non-raster : décodage parallèle + inpainting de frames ; (b) **CE à crédit partiel sur couleurs voisines** (distance palette) — utile en low-data |
 | 5 | **LottieGPT** — [arXiv 2604.11792](https://arxiv.org/abs/2604.11792) | 2026-04-13 | Tokenizer natif d'animation vectorielle (keyframes, calques) ; dataset 660 K animations ; fine-tune Qwen-VL | Même thèse (animation = séquence AR) avec **compression** : encoder frame₀ puis **deltas** inter-frames |
 | 6 | **Mystic07** `flux-lora-spritesheet` — [HF](https://hf.co/Mystic07/flux-lora-spritesheet) | 2026-04-27 (dépôt) | LoRA r32 FLUX.2-klein-9B sur ~18 706 sheets style **LPC** | Confirme LPC comme gisement massif de cycles longs multi-directions → à ingérer **directement** (§3) |
@@ -107,8 +107,8 @@ circulaire, anti-exposure-bias, CE à crédit partiel, compression inter-frames,
 
 | Travail | Date | Idée | Application Esprite |
 |---|---|---|---|
-| **SSD** — Spatially Speculative Decoding — [2606.20543](https://huggingface.co/papers/2606.20543) (Rutgers) | 2026-06-18 | Têtes prédisant aussi le token *sous* le courant ; proposition de lignes entières vérifiées ; jusqu'à 13,3× sur Janus-Pro | `model.py` : têtes auxiliaires x+1 / y+1 **et « même (x,y) à t+1 »** ; `sample.py` : vérification. Taux d'acceptation attendu très élevé sur frames redondantes |
-| **MuLo-SD** — [2601.05149](https://huggingface.co/papers/2601.05149) (Qualcomm) | 2026-01-08 | Brouillon basse-rés + ré-échantillonnage *local* au rejet | `sample.py` seul : **frame t−1 comme brouillon gratuit** de t, vérifiée en une passe (rééchantillonnage local = approximation à valider) |
+| **SSD** — Spatially Speculative Decoding — [2606.20543](https://huggingface.co/papers/2606.20543) (Rutgers) | 2026-06-18 | Têtes prédisant aussi le token *sous* le courant ; jusqu'à 13,28× sur **Emu3** (v1 ; 11,03× en v2), **5,7× sur Janus-Pro** (seule comparaison propre) ; ⚠ non exact (tokens rejetés corrigés, pas rééchantillonnés) ; 2,7–7,7× plus de FLOPs ⚠ _(corrigé §5)_ | `model.py` : têtes auxiliaires x+1 / y+1 **et « même (x,y) à t+1 »** ; `sample.py` : vérification. Taux d'acceptation attendu très élevé sur frames redondantes |
+| **MuLo-SD** — [2601.05149](https://huggingface.co/papers/2601.05149) (Qualcomm) | 2026-01-08 | Brouillon basse-rés (drafter de même taille que la cible) + ré-échantillonnage *local* au rejet ; 1,7× (v1), jusqu'à 5× combiné au décodage parallèle (v2) | `sample.py` seul : **frame t−1 comme brouillon gratuit** de t, vérifiée en une passe (rééchantillonnage local = approximation à valider) |
 | VC-Attention — 2609.15810 | 2026-09-14 | Attention FP8 training-free, kernels ciblant RTX 5090 | Accélération inférence (gain annoncé sur le noyau seul) |
 | ReHyAt — [2601.04342](https://huggingface.co/papers/2601.04342) (Qualcomm) | 2026-01-07 | Softmax local + linéaire global, récurrent | Basse priorité à 18 k tokens / 50 M |
 
@@ -125,7 +125,7 @@ circulaire, anti-exposure-bias, CE à crédit partiel, compression inter-frames,
 
 | Travail | Date | Idée | Application Esprite |
 |---|---|---|---|
-| **SmartCrop** — [2603.06123](https://huggingface.co/papers/2603.06123) | 2026-03-06 | La longueur de sortie est lisible dans la représentation du prompt (probe) | Conséquence : **ne plus faire « compter » le modèle** — N est déjà dans le préfixe ; rendre la structure déterministe (voir §4) |
+| **SmartCrop** — [2603.06123](https://huggingface.co/papers/2603.06123) | 2026-03-06 | Longueur lue zero-shot sur les logits EOS de la 1re passe (canevas masqué) — **pas de probe entraîné** _(corrigé §5)_ | Conséquence : **ne plus faire « compter » le modèle** — N est déjà dans le préfixe ; rendre la structure déterministe (voir §4) |
 | **ρ-EOS** — [2601.22527](https://huggingface.co/papers/2601.22527) (ICML) | 2026-01-30 | Densité implicite d'EOS pour étendre/contracter, sans entraînement | `sample.py` : monitorer P(SEQ_END)/P(FRAME_SEP) aux frontières de frame |
 | DreamOn — [2602.01326](https://huggingface.co/papers/2602.01326) | 2026-02-01 (papier ; blog probablement 2025) | États [expand]/[delete] dans la diffusion | Voie MDM : ajuster le nombre de frames pendant le débruitage |
 
@@ -142,10 +142,10 @@ circulaire, anti-exposure-bias, CE à crédit partiel, compression inter-frames,
 
 | Travail | Date | Idée | Application Esprite |
 |---|---|---|---|
-| **MDM-Prime-v2** — [2603.16077](https://huggingface.co/papers/2603.16077) | 2026-03-17 | Masquage partiel au niveau de sous-tokens binaires ; 21,8× plus efficace en calcul qu'AR (texte) | 16 couleurs = **4 bits** → sous-tokens masquables (opacité connue avant teinte) |
+| **MDM-Prime-v2** — [2603.16077](https://huggingface.co/papers/2603.16077) | 2026-03-17 | Masquage partiel au niveau de sous-tokens binaires ; ⚠ l'affirmation « 21,8× vs AR » de la v1 est **retirée** en v3/v4 (pertes non comparables entre familles) _(corrigé §5)_ | 16 couleurs = **4 bits** → sous-tokens masquables (opacité connue avant teinte) |
 | CWDFM — [2607.21427](https://huggingface.co/papers/2607.21427) (Meta FAIR) | 2026-07-23 | CE pondérée par la densité de contexte révélé | Pondération par voisins révélés (4-voisinage + t±1) |
 | ProSeCo — [2602.11590](https://huggingface.co/papers/2602.11590) ; Info-Gain Sampler — [2602.18176](https://huggingface.co/papers/2602.18176) ; LoMDM — [2602.02112](https://huggingface.co/papers/2602.02112) ; Tri-Modal MDM design space — [2602.21472](https://huggingface.co/papers/2602.21472) (Apple) | 2026-02/03 | Auto-correction ; ordre de révélation par gain d'info ; ordre appris ; réglages par défaut MDM | Briques si bascule MDM |
-| **Abra** — [2608.17286](https://huggingface.co/papers/2608.17286) | 2026-08-18 | Lois d'échelle T2I : optimum ≈ 200 tokens image/param | Esprite ≈ **< 1 token/param** (≈ 5 k cycles, majoritairement 2 frames, pour 50 M) → régime très sous-alimenté en données : plus de données > plus de params ; tester 15–25 M |
+| **Abra** — [2608.17286](https://huggingface.co/papers/2608.17286) | 2026-08-18 | Lois d'échelle T2I : optimum ≈ 200 tokens image/param | Chiffre valable en diffusion *latente* ; pour les modèles à séquences de pixels, Abra cite **200–400 TPP** (Yan et al. 2025, 2511.08704). Esprite ≈ **< 1 token/param** (≈ 5 k cycles, majoritairement 2 frames, pour 50 M) → régime très sous-alimenté en données : plus de données > plus de params ; tester 15–25 M |
 
 ### 2.7 Discussion : plus de pixels par passe *vs* décodage spéculatif
 
@@ -283,18 +283,25 @@ le volume de données connu, et DPO en dernier.
    humain dans l'arène existante).
 
 Après la phase 1, le rapport tokens/param passe d'≈ 1 à un ordre de grandeur de ~20
-(estimation grossière) : **le 50 M redevient raisonnable** ; ne pas réduire le modèle avant
-d'avoir les données.
+(estimation grossière : ~150 k cycles × ~6 frames × 1024 ≈ 0,9 G tokens pour 50 M) — toujours
+loin des 200–400 TPP cités pour les modèles à séquences de pixels (§5) : on reste en régime
+**contraint en données** → multi-epochs + augmentations (palette swap, miroir L↔R, décalage de
+phase du cycle) ; mesurer avant de décider de la taille du modèle.
 
 ### Phase 2 — Correctifs d'entraînement bon marché (modèle actuel)
 
-6. **Bruitage du contexte** (In-Context Forcing / VideoAR Random Frame Mask) dans
-   `data.py`/`tokenize.py` : remplacer une fraction des pixels des frames précédentes (et
-   parfois de la ref) par une couleur aléatoire, taux plus fort sur t−1 ; la loss reste sur
-   les cibles propres. Vise la copie triviale, la dérive et le cold-start.
+6. **Bruitage du contexte** (In-Context Forcing / VideoAR) dans `data.py`/`tokenize.py` :
+   remplacer une fraction des pixels des frames précédentes (et parfois de la ref) par une
+   couleur aléatoire, taux plus fort sur t−1 ; la loss reste sur les cibles propres. Point de
+   départ chiffré (VideoAR, plein texte) : p ~ U(0, 0,25) + 0,01·t. ⚠ VideoAR note que le
+   *Random Frame Mask* **freine la convergence sur petit dataset** → introduire après un premier
+   plateau SFT, et en A/B. Variante PRA (discrète) : une passe sans gradient, échantillonner
+   chaque position depuis son préfixe, réinjecter une fraction comme entrées.
 7. **Curriculum de longueur** 2 → 4 → 16 frames (le sampler de buckets s'y prête).
 8. **Décodage spéculatif** dans `sample.py`/`graph_sampler.py` : brouillon = frame t−1 (ou
-   la ref pour la frame 0), vérification par blocs — sans perte, sans ré-entraînement.
+   la ref pour la frame 0), vérification par blocs avec **acceptation/rejet standard** (exacte,
+   contrairement à SSD) — sans ré-entraînement. À 50 M params le décodage est dominé par
+   l'overhead par pas : vérifier k tokens coûte ≈ 1 pas, d'où le gain.
 9. **Structure imposée à l'inférence** : N est dans le préfixe, donc forcer `FRAME_SEP`
    après chaque 1024 pixels et `SEQ_END` après N frames (masque de logits) — supprime le
    runaway sans toucher l'entraînement ; `w_sep`/`w_end` peuvent ensuite redescendre.
@@ -307,17 +314,25 @@ d'avoir les données.
 11. **Flag KEEP par patch** pour t ≥ 1 (option D) : un patch inchangé = 1 token → la
     redondance inter-frames devient explicite, gros gain sur idle/2-frames.
 12. Le spéculatif (8) reste compatible par-dessus. RoPE 3D relative : optionnel, basse priorité.
-13. Alternative à garder en réserve : diffusion discrète masquée (MDM, 4 bits/pixel
-    MDM-Prime-v2) si l'AR plafonne — changement de paradigme, DPO à adapter (ELBO).
+13. Alternative à garder en réserve : diffusion discrète masquée (MDM) si l'AR plafonne —
+    changement de paradigme, DPO à adapter (ELBO). (L'argument « 21,8× vs AR » de
+    MDM-Prime-v2 a été retiré par ses auteurs ; ne pas en faire un motif de bascule.)
+12b. **Index de frame cyclique** (Loopy, plein texte) : `frame_emb` indexé mod N plutôt que
+    contraindre frame₀ = frame_N (qui provoque un « static collapse »).
 
 ### Phase 4 — DPO
 
 14. **Paires synthétiques** type RealAlign dans `dpo.py` : gagnant = cycle réel, perdant =
     même cycle dégradé (frame dupliquée/supprimée, boucle cassée, pixels orphelins, décalage
-    1 px, bruit de palette) — mélangées aux votes, jamais à leur place.
-15. **Paires à préfixe partagé** (AR-CoPO) dans `dpo_campaign.py` : les 2 seeds partagent les
-    frames 0..k ; logπ sur les tokens divergents seulement → moins de variance par vote.
-16. **Poly-DPO** (ViPO) comme remplacement de `dpo_loss` à tester en A/B (votes bruités).
+    1 px, bruit de palette) ou avec une **région ré-échantillonnée par le modèle** — mélangées
+    aux votes, jamais à leur place. Plein texte : ~512 paires suffisent ; le DPO seul apporte
+    peu **sans étape préalable de rapprochement de distribution** (chez Esprite, le SFT joue
+    ce rôle).
+15. **Forking à frame pivot** (AR-CoPO, qui utilise des groupes GRPO de 12 branches, pas des
+    paires) dans `dpo_campaign.py` : les 2 seeds partagent les frames 0..k ; logπ sur les
+    tokens divergents seulement → moins de variance par vote.
+16. **Poly-DPO** (ViPO) : L = −log p + α(1−p), p = σ(logit DPO) ; α = 8 sur données bruitées,
+    α ≈ 0 sur données propres (= DPO). Deux lignes dans `dpo_loss`, A/B avec α > 0.
 
 ### Points de vigilance
 
@@ -327,3 +342,78 @@ d'avoir les données.
 - Les dates des travaux 2026 ont été vérifiées via HF Papers (arXiv bloqué) : seuls les
   résumés/débuts d'articles ont été lus ; les transpositions à Esprite sont des hypothèses
   à valider par ablation.
+
+---
+
+## 5. Vérification sur texte complet (arXiv débloqué)
+
+> arXiv accessible après élargissement de l'accès réseau. `export.arxiv.org` (API) renvoie 406
+> via le proxy → dates v1 lues sur l'historique de soumission des pages `arxiv.org/abs/<id>`,
+> textes complets via `arxiv.org/html/<id>`. Recontrôle indépendant fait sur SSD (13,28× =
+> Emu3, 5,74× = Janus-Pro, confirmé dans le texte v1).
+
+### 5.1 Verdicts
+
+| ID | Travail | v1 | Verdict |
+|---|---|---|---|
+| 2606.27978 | PRA (PKU, DP Technology) | 2026-06-26 | ✅ — nuance : tokens **continus** + tête de flow, transposition discrète indirecte |
+| 2608.05237 | In-Context Forcing (ShanghaiTech, Tencent Youtu, ZJU) | 2026-08-05 | ✅ |
+| 2601.05966 | VideoAR (Baidu ERNIE) | 2026-01-09 | ✅ |
+| 2607.20368 | Self Gradient Forcing (JD) | 2026-07-22 | ✅ — **sans objet pour Esprite** : un AR à tokens teacher-forcé sur préfixe auto-généré propage déjà le gradient dans les K/V ; le « trou » corrigé est propre au cache gelé de Self Forcing |
+| 2606.20543 | SSD (Rutgers) | 2026-06-18 | ⚠ **corrigé** : 13,28× = Emu3 (11,03× en v2), Janus-Pro 5,7× ; non exact ; +FLOPs ; têtes ~134 M prédisant l'état caché |
+| 2601.05149 | MuLo-SD (Qualcomm) | 2026-01-08 | ⚠ **corrigé** : 1,7× (v1) → jusqu'à 5× en v2 combiné au décodage parallèle ; drafter de même taille |
+| 2605.19839 | « RealAlign » (SYSU, Tsinghua SIGS, ANU…) — titre : *When Preference Labels Fall Short* | 2026-05-19 | ✅ — 2 étapes (Diffusion-DRO puis DPO), 512 paires suffisent |
+| 2603.17461 | AR-CoPO (CUHK MMLab…) | 2026-03-18 | ✅ — nuance : groupes GRPO G = 12, pas des paires |
+| 2604.24953 | ViPO / Poly-DPO (UCF, ByteDance Seed, UCLA) | 2026-04-27 | ✅ — +6,87 GenEval **vs Diffusion-DPO** |
+| 2607.10134 | LeRoPE (UCSD) | 2026-07-11 | ✅ — 1D texte uniquement |
+| 2608.17286 | Abra (Luma AI) | 2026-08-18 | ✅ — nuance : diffusion latente ; 200–400 TPP cités pour séquences de pixels |
+| 2603.16077 | MDM-Prime-v2 (Toronto/Vector, NVIDIA, NTU ; EMNLP 2026) | 2026-03-17 | ⚠ **corrigé** : « 21,8× vs AR » retiré en v3/v4 |
+| 2608.23090 | Loopy (Tianjin, PolyU ; ACM TOG) | 2026-08-24 | ✅ — (t − δ_l) mod T′ ; couche ancre non décalée ; LoRA r4 sur 120 vidéos |
+| 2606.29814 | Nemotron-Labs-Diffusion-Image | 2026-06-29 | ✅ — GCE = CE + CE sur clusters k-means d'un codebook 132 K → **peu utile à 16 couleurs** |
+| 2603.06123 | SmartCrop (Bocconi) | 2026-03-06 | ⚠ **corrigé** : pas de probe, lecture zero-shot des logits EOS |
+| 2601.22527 | ρ-EOS (Shanghai AI Lab, Fudan) | 2026-01-30 | ✅ — MDM uniquement, non pertinent en AR |
+| 2604.15299 | AnimationBench | 2026-04-16 | date précisée |
+| 2603.14587 | Texel Splatting | 2026-03-15 | date précisée |
+| 2602.21153 | SpriteToMesh | 2026-02-24 | date précisée |
+
+### 5.2 Détails d'implémentation retenus
+
+- **VideoAR** — corruption inter-frames p_flip(t) ~ U(p_min + δt, p_max + δt), p_min = 0,
+  p_max = 0,25, δ = 0,01/frame ; ablation gFVD 96,0 → 92,5 cumulée (RoPE temporelle,
+  corruption dépendante du temps, héritage d'erreur). *Random Frame Mask* : p non publié,
+  **gêne la convergence sur petit dataset**.
+- **PRA** — ablation (FID, PRA-B 100 ep.) : entrées pixels GT 42,4 → GT + bruit 32,6 →
+  entrées « type inférence » 2,88 : l'écart train/inférence est de loin le facteur dominant.
+  Bruit optimal t_min = 0,7 (≠ défaut 0,5).
+- **In-Context Forcing** — contexte à l'étape j bruité au niveau t_{j−k} pour la frame i−k
+  (proche = plus bruité) ; convergence plus lente (1 900 vs 1 500 it.).
+- **Poly-DPO** — L = −log p + α(1−p) ; α = 8 (bruité), α < 0 (paires triviales), α ≈ 0 (propre).
+- **RealAlign** — négatifs = zone saillante ré-inpaintée ; robuste au type de perturbation ;
+  512 paires, gains décroissants au-delà.
+- **AR-CoPO** — pivot p ~ U(1, L), seul le bruit du chunk pivot varie, mise à jour sur ce
+  chunk seul ; clipping indispensable en semi-on-policy.
+- **SSD** — têtes prédisant l'état caché pré-norm (en espace token discret : effondrement) ;
+  gain dû à un régime limité en bande passante → **faible attendu à 50 M** ; l'idée de
+  brouillons « +32 » (pixel du dessous) et « +1024 » (même pixel frame suivante) reste valable.
+
+### 5.3 Recherche arXiv directe (2026-01-01 → 2026-09-25)
+
+**Aucun nouvel article 2026 spécifiquement consacré à la génération de pixel-art ou de
+cycles de sprites** (listings `arxiv.org/search` + WebSearch ; limite : recherche plein texte
+non disponible). Travaux voisins nouveaux :
+
+| Travail | v1 | Intérêt pour Esprite |
+|---|---|---|
+| **Visibility-Routed RGBA I2V** — [2608.09355](https://arxiv.org/abs/2608.09355) | 2026-08-10 | Dataset **GameAlpha-2.4K** (clips RGBA style jeu) ; routeur qui **saute les tokens transparents** → traiter l'index 0 à part (skip/simplification du fond) |
+| **VAnim** — [2605.01517](https://arxiv.org/abs/2605.01517) (ICML 2026) | 2026-05-02 | *Sparse State Updates* (séquence ÷9,8) = même intuition que le flag KEEP ; GRPO à récompense de rendu |
+| **Bunraku** — [2607.27348](https://arxiv.org/abs/2607.27348) | 2026-07-29 | Live2D depuis une illustration ; ×112 de taille n'aide pas, la prédiction **jointe** oui (structure > taille) |
+| **OmniLottie** — [2603.02138](https://arxiv.org/abs/2603.02138) (CVPR 2026) | 2026-03-02 | Tokeniseur Lottie compact, MMLottie-2M |
+| **PeCA** — [2608.00903](https://arxiv.org/abs/2608.00903) (ECCV 2026) | 2026-08-02 | Colorisation paint-bucket à palette, cohérence inter-frames → recoloriage/contrôle de palette |
+| **SketchKeyAnime** — [2606.19958](https://arxiv.org/abs/2606.19958) | 2026-06-18 | Animation guidée par poses clés éparses |
+| 2602.12679 (ICLR 2026), 2603.17651 (CVPR 2026) | 2026-02 / 03 | Inbetweening training-free ; *Rescaled Temporal RoPE* ancrée sur keyframes |
+| LiveSVG 2605.30174, See-through 2602.03749, SPRITE (UI) 2604.18591, GameDevBench 2602.11103 | 2026 | Faible |
+
+**Incidence sur la proposition** (déjà reportée en §4) : SSD rétrogradé au rang d'idée de
+brouillon (vérification exacte maison) ; MDM-Prime-v2 n'est plus un argument de bascule ;
+Self Gradient Forcing sans objet ; bruitage du contexte à introduire prudemment (petit
+dataset) ; Poly-DPO et RealAlign chiffrés ; index de frame cyclique (Loopy) ajouté.
