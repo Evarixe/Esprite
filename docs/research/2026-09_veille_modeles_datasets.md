@@ -38,7 +38,9 @@ guard, dodge, hurt, defeat…) n'ont quasiment aucun exemple hors TSR.
    (souvent < 10 % de pixels changent) mais le modèle re-prédit tout.
 2. *Comptage des frames* fragile (1 terminateur pour 1024 pixels) → hacks de pondération.
 3. *Cold-start no-ref* (frames vides) → exposure bias.
-4. *PE sinusoïdale absolue 1D* alors que la structure est 3D (x, y, t) ; pas de RoPE.
+4. *Positions* : déjà 3D (embeddings x / y / frame appris, pixels seulement) + PE de séquence
+   sinusoïdale ; encodage **absolu additif** — seule piste restante : passer en relatif (RoPE 3D).
+   _(corrigé après retour de l'auteur : ce n'est pas un point faible majeur.)_
 5. *Données* : pénurie d'animations longues et d'actions variées.
 
 ---
@@ -114,7 +116,7 @@ circulaire, anti-exposure-bias, CE à crédit partiel, compression inter-frames,
 
 | Travail | Date | Idée | Application Esprite |
 |---|---|---|---|
-| **LeRoPE** — [2607.10134](https://huggingface.co/papers/2607.10134) (UCSD) | 2026-07-11 | Fréquences RoPE apprenables ; testé from scratch **dès 52 M** | `model.py` : **RoPE axiale 3D (x, y, t)** à fréquences apprenables, remplace PE sinusoïdale 1D + x/y/frame appris ; t circulaire (Loopy) |
+| **LeRoPE** — [2607.10134](https://huggingface.co/papers/2607.10134) (UCSD) | 2026-07-11 | Fréquences RoPE apprenables ; testé from scratch **dès 52 M** | `model.py` : les positions sont **déjà 3D** (x/y/frame appris) ; option mineure = passage en **relatif** (RoPE 3D à fréquences apprenables, t circulaire à la Loopy). Priorité basse |
 | Partial RoPE — [2603.11611](https://huggingface.co/papers/2603.11611) | 2026-03-12 | RoPE sur une fraction des dims suffit | Réserver une partie de chaque tête à la position |
 | **DeltaTok** — [2604.04913](https://huggingface.co/papers/2604.04913) (Amazon, TU/e, JHU) | 2026-04-06 | Une frame = un token « delta » (continu) ; entraînement multi-hypothèses | Transposition discrète (extrapolation) : pour t ≥ 1, vocab **KEEP + 16 couleurs** → la CE ne réapprend plus les pixels statiques |
 | Echo-Infinity 2606.04527 ; TIE 2605.10543 | 2026-06 / 2026-05 | Ancrage RoPE de frames « sink » ; RoPE d'intervalles | Réf à position temporelle fixe ; encodage de la durée [0, N] |
@@ -144,6 +146,23 @@ circulaire, anti-exposure-bias, CE à crédit partiel, compression inter-frames,
 | CWDFM — [2607.21427](https://huggingface.co/papers/2607.21427) (Meta FAIR) | 2026-07-23 | CE pondérée par la densité de contexte révélé | Pondération par voisins révélés (4-voisinage + t±1) |
 | ProSeCo — [2602.11590](https://huggingface.co/papers/2602.11590) ; Info-Gain Sampler — [2602.18176](https://huggingface.co/papers/2602.18176) ; LoMDM — [2602.02112](https://huggingface.co/papers/2602.02112) ; Tri-Modal MDM design space — [2602.21472](https://huggingface.co/papers/2602.21472) (Apple) | 2026-02/03 | Auto-correction ; ordre de révélation par gain d'info ; ordre appris ; réglages par défaut MDM | Briques si bascule MDM |
 | **Abra** — [2608.17286](https://huggingface.co/papers/2608.17286) | 2026-08-18 | Lois d'échelle T2I : optimum ≈ 200 tokens image/param | Esprite ≈ **< 1 token/param** (≈ 5 k cycles, majoritairement 2 frames, pour 50 M) → régime très sous-alimenté en données : plus de données > plus de params ; tester 15–25 M |
+
+### 2.7 Discussion : plus de pixels par passe *vs* décodage spéculatif
+
+Question de l'auteur : plutôt que spéculer, générer plusieurs pixels par passe ?
+
+| Option | Principe | Exact ? | Effet entraînement | Gain inférence | Risque |
+|---|---|---|---|---|---|
+| A. Têtes parallèles naïves (k pixels indépendants par passe) | k têtes, échantillonnage indépendant | **Non** — suppose les k pixels indépendants sachant le passé | nul | ×k | Incohérences locales (pixels orphelins, contours cassés) : fatal en pixel-art. Acceptable **seulement comme drafter** (type Medusa/SSD) |
+| B. Spéculatif (brouillon = frame t−1 / ref / têtes SSD) | le modèle vérifie un bloc en une passe | **Oui** (sans perte) | nul (ou têtes légères) | ∝ longueur moyenne des séries acceptées ; ~1 passe par pixel *changé* | Gain faible sur frames très animées ; ne réduit pas le coût d'entraînement |
+| C. **Hiérarchique global/local** (patch 4×4 : gros transformer par patch, petit décodeur AR intra-patch — lignée MegaByte / RQ-Transformer) | 1 passe du gros modèle = 16 pixels, décodés exactement par un petit modèle | **Oui** | séquence du gros modèle ÷16 (18 k → ~1,1 k) ⇒ entraînement bien moins cher, batchs plus gros | ~×10+ sur le gros modèle | Refonte `model.py`/`sample.py`/`graph_sampler.py` ; DPO inchangé (vraisemblance exacte) |
+| D. + **flag KEEP par patch** pour t ≥ 1 | un patch inchangé vs t−1 = 1 token, pas de décodage local | Oui | apprend explicitement « ce qui bouge » ; rééquilibre la CE | énorme sur idle/2-frames (majorité des patchs inchangés) | Choix de la taille de patch |
+| E. Diffusion discrète masquée (MaskGIT/MDM) | ~8–16 passes par frame, tous pixels en parallèle | Approx. (ELBO) | réputé meilleur en régime data-constrained | fort | Changement de paradigme ; DPO → variante ELBO |
+
+**Avis** : A est à éviter comme sampler final. B est gratuit et immédiat (inférence seule). Le
+vrai levier « plusieurs pixels par passe » est **C + D** : exact, divise aussi le coût
+d'**entraînement** (précieux pour multiplier les epochs sur un petit dataset), et le flag KEEP
+encode directement la redondance inter-frames. B reste compatible par-dessus C.
 
 **Écartés** (antérieurs à 2026 ou dates incohérentes) : Diffusion beats AR in data-constrained
 settings (2507.15857), Diffusion LMs are Super Data Learners (2511.03276), MaskGRPO, URSA,
