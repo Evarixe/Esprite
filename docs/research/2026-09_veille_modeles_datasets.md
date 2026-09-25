@@ -85,7 +85,69 @@ circulaire, anti-exposure-bias, CE à crédit partiel, compression inter-frames,
 
 ## 2. Veille techniques transférables (≥ janvier 2026)
 
-_(en cours)_
+> Dates vérifiées via HF Papers (`published_at`) + préfixe AAMM + ligne « Published » du
+> HTML arXiv quand disponible. Seuls résumés/débuts d'articles lus (arXiv bloqué). Les
+> « applications Esprite » sont des **extrapolations**, pas des résultats des papiers.
+> Aucun travail 2026 spécifiquement pixel-art/sprite trouvé côté HF Papers.
+
+### 2.1 Anti-exposure-bias, cold-start, dérive inter-frames (AR)
+
+| Travail | Date | Idée | Application Esprite | Coût |
+|---|---|---|---|---|
+| **In-Context Forcing** — [2608.05237](https://huggingface.co/papers/2608.05237) (ShanghaiTech, Tencent Youtu, ZJU) | 2026-08-05 | Contexte trop propre ⇒ raccourci de copie ; bruitage/masquage **progressif** du contexte (plus fort sur les frames proches) | `tokenize.py`/`loss.py` : remplacer une fraction des pixels de t−1 par couleur aléatoire (taux décroissant avec la distance) → casse la copie triviale, robustesse à ses propres erreurs | ≈ 0 |
+| **VideoAR** — [2601.05966](https://huggingface.co/papers/2601.05966) (Baidu ERNIE) | 2026-01-09 | Next-scale intra-frame + next-frame causal ; *Random Frame Mask*, *Cross-Frame Error Correction*, *Multi-scale Temporal RoPE* ; curriculum durée/résolution | Random Frame Mask + **curriculum 2→4→16 frames** ; (option lourde) next-scale 8→16→32 intra-frame | faible / élevé |
+| **Self Gradient Forcing** — [2607.20368](https://huggingface.co/papers/2607.20368) (JD) | 2026-07-22 | Rollout sans gradient fidèle à l'inférence, puis reconstruction parallèle où le contexte auto-généré reçoit du gradient sur ses K/V | Générer t−1 sans grad, entraîner t sur ce contexte ; séquences courtes ⇒ rollout bon marché ; cible dérive + cold-start | ~2× step |
+| Context Forcing — [2602.06028](https://huggingface.co/papers/2602.06028) | 2026-02-05 | Teacher long-contexte → student | Faible (séquences courtes) | — |
+
+(+ **PRA**, §1 #3, même famille.)
+
+### 2.2 Accélération du décodage (frames redondantes)
+
+| Travail | Date | Idée | Application Esprite |
+|---|---|---|---|
+| **SSD** — Spatially Speculative Decoding — [2606.20543](https://huggingface.co/papers/2606.20543) (Rutgers) | 2026-06-18 | Têtes prédisant aussi le token *sous* le courant ; proposition de lignes entières vérifiées ; jusqu'à 13,3× sur Janus-Pro | `model.py` : têtes auxiliaires x+1 / y+1 **et « même (x,y) à t+1 »** ; `sample.py` : vérification. Taux d'acceptation attendu très élevé sur frames redondantes |
+| **MuLo-SD** — [2601.05149](https://huggingface.co/papers/2601.05149) (Qualcomm) | 2026-01-08 | Brouillon basse-rés + ré-échantillonnage *local* au rejet | `sample.py` seul : **frame t−1 comme brouillon gratuit** de t, vérifiée en une passe (rééchantillonnage local = approximation à valider) |
+| VC-Attention — 2609.15810 | 2026-09-14 | Attention FP8 training-free, kernels ciblant RTX 5090 | Accélération inférence (gain annoncé sur le noyau seul) |
+| ReHyAt — [2601.04342](https://huggingface.co/papers/2601.04342) (Qualcomm) | 2026-01-07 | Softmax local + linéaire global, récurrent | Basse priorité à 18 k tokens / 50 M |
+
+### 2.3 Représentation : positions et redondance inter-frames
+
+| Travail | Date | Idée | Application Esprite |
+|---|---|---|---|
+| **LeRoPE** — [2607.10134](https://huggingface.co/papers/2607.10134) (UCSD) | 2026-07-11 | Fréquences RoPE apprenables ; testé from scratch **dès 52 M** | `model.py` : **RoPE axiale 3D (x, y, t)** à fréquences apprenables, remplace PE sinusoïdale 1D + x/y/frame appris ; t circulaire (Loopy) |
+| Partial RoPE — [2603.11611](https://huggingface.co/papers/2603.11611) | 2026-03-12 | RoPE sur une fraction des dims suffit | Réserver une partie de chaque tête à la position |
+| **DeltaTok** — [2604.04913](https://huggingface.co/papers/2604.04913) (Amazon, TU/e, JHU) | 2026-04-06 | Une frame = un token « delta » (continu) ; entraînement multi-hypothèses | Transposition discrète (extrapolation) : pour t ≥ 1, vocab **KEEP + 16 couleurs** → la CE ne réapprend plus les pixels statiques |
+| Echo-Infinity 2606.04527 ; TIE 2605.10543 | 2026-06 / 2026-05 | Ancrage RoPE de frames « sink » ; RoPE d'intervalles | Réf à position temporelle fixe ; encodage de la durée [0, N] |
+
+### 2.4 Contrôle de longueur / comptage des frames
+
+| Travail | Date | Idée | Application Esprite |
+|---|---|---|---|
+| **SmartCrop** — [2603.06123](https://huggingface.co/papers/2603.06123) | 2026-03-06 | La longueur de sortie est lisible dans la représentation du prompt (probe) | Conséquence : **ne plus faire « compter » le modèle** — N est déjà dans le préfixe ; rendre la structure déterministe (voir §4) |
+| **ρ-EOS** — [2601.22527](https://huggingface.co/papers/2601.22527) (ICML) | 2026-01-30 | Densité implicite d'EOS pour étendre/contracter, sans entraînement | `sample.py` : monitorer P(SEQ_END)/P(FRAME_SEP) aux frontières de frame |
+| DreamOn — [2602.01326](https://huggingface.co/papers/2602.01326) | 2026-02-01 (papier ; blog probablement 2025) | États [expand]/[delete] dans la diffusion | Voie MDM : ajuster le nombre de frames pendant le débruitage |
+
+### 2.5 Alignement de préférence
+
+| Travail | Date | Idée | Application Esprite |
+|---|---|---|---|
+| **RealAlign** — [2605.19839](https://huggingface.co/papers/2605.19839) | 2026-05-19 | Données réelles = gagnantes vs échantillons générés/perturbés, sans annotation | `dpo.py` : **paires synthétiques** (gagnant = cycle réel ; perdant = frame dupliquée/supprimée, boucle cassée, bruit palette, pixels orphelins, décalage 1 px, ou sortie modèle) mélangées aux votes |
+| **AR-CoPO** — [2603.17461](https://huggingface.co/papers/2603.17461) | 2026-03-18 | Rollouts à préfixe partagé divergent sur un chunk → paires localisées | `dpo_campaign.py` : best-of-2 **partageant les frames 0..k** ; logπ sur les seuls tokens divergents → variance ↓ |
+| **VAR RL Done Right** — [2601.02256](https://huggingface.co/papers/2601.02256) (Tsinghua, ByteDance) | 2026-01-05 | GRPO pour VAR, propagation de masque spatio-temporelle | DPO restreint/pondéré sur la **zone de différence** gagnant/perdant |
+| UDM-GRPO — [2604.18518](https://huggingface.co/papers/2604.18518) ; V-GRPO — [2604.23380](https://huggingface.co/papers/2604.23380) | 2026-04-20 ; 2026-04-25 | GRPO stable pour diffusion discrète uniforme ; GRPO via ELBO | Uniquement si bascule MDM ; récompenses vérifiables (compte, boucle, palette) |
+
+### 2.6 Voie « diffusion discrète masquée » (MDM) et régime de données
+
+| Travail | Date | Idée | Application Esprite |
+|---|---|---|---|
+| **MDM-Prime-v2** — [2603.16077](https://huggingface.co/papers/2603.16077) | 2026-03-17 | Masquage partiel au niveau de sous-tokens binaires ; 21,8× plus efficace en calcul qu'AR (texte) | 16 couleurs = **4 bits** → sous-tokens masquables (opacité connue avant teinte) |
+| CWDFM — [2607.21427](https://huggingface.co/papers/2607.21427) (Meta FAIR) | 2026-07-23 | CE pondérée par la densité de contexte révélé | Pondération par voisins révélés (4-voisinage + t±1) |
+| ProSeCo — [2602.11590](https://huggingface.co/papers/2602.11590) ; Info-Gain Sampler — [2602.18176](https://huggingface.co/papers/2602.18176) ; LoMDM — [2602.02112](https://huggingface.co/papers/2602.02112) ; Tri-Modal MDM design space — [2602.21472](https://huggingface.co/papers/2602.21472) (Apple) | 2026-02/03 | Auto-correction ; ordre de révélation par gain d'info ; ordre appris ; réglages par défaut MDM | Briques si bascule MDM |
+| **Abra** — [2608.17286](https://huggingface.co/papers/2608.17286) | 2026-08-18 | Lois d'échelle T2I : optimum ≈ 200 tokens image/param | Esprite ≈ **< 1 token/param** (≈ 5 k cycles, majoritairement 2 frames, pour 50 M) → régime très sous-alimenté en données : plus de données > plus de params ; tester 15–25 M |
+
+**Écartés** (antérieurs à 2026 ou dates incohérentes) : Diffusion beats AR in data-constrained
+settings (2507.15857), Diffusion LMs are Super Data Learners (2511.03276), MaskGRPO, URSA,
+Self Forcing (2506.08009), RandAR/ARPG, Pref-GRPO, LLaDA 1.5, 2512.14549, 2606.29066.
 
 ## 3. Datasets
 
