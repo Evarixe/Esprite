@@ -170,7 +170,85 @@ Self Forcing (2506.08009), RandAR/ARPG, Pref-GRPO, LLaDA 1.5, 2512.14549, 2606.2
 
 ## 3. Datasets
 
-_(en cours)_
+> Vérifié par clones `--filter=blob:none` (arbres, licences, `tracker.json`, échantillons PNG/XML
+> analysés PIL) et README HF. Bloqués par le proxy (non vérifiés en direct) : itch.io,
+> opengameart, kaggle, spriters-resource, wiki PMDO, Showdown. Recomptes indépendants
+> faits sur PMD (3339 `AnimData.xml`, 3318 `Walk-Anim.png`, 1026 entrées tracker, licence
+> CC BY-NC 4.0) et sur la licence LPC Revised (CC-BY 3.0 / OGA-BY 3.0).
+
+### 3.1 PMD SpriteCollab — ★ 5/5 — [github.com/PMDCollab/SpriteCollab](https://github.com/PMDCollab/SpriteCollab)
+
+- **3339 jeux de sprites** (981 espèces de base, 748 formes, 1436 shiny, 96 femelles, 78 femelles
+  shiny) ; dépôt actif (dernier commit 2026-09-25).
+- Par jeu : `<Anim>-Anim.png` (+ Offsets/Shadow), `AnimData.xml` (FrameWidth/Height, `Durations`
+  par frame, Rush/Hit/ReturnFrame, alias `CopyOf` à dédupliquer), `credits.txt`.
+- **8 directions** par feuille (0 bas, 2 droite, 4 haut, 6 gauche → les 4 d'Esprite).
+- Animations les plus couvertes (sur 3339) : Rotate, Idle, Walk, Swing, Double, Sleep, Attack,
+  Hop, Charge, Hurt (~3280–3340), Shoot (2801) ; puis ~700–870 : Cringe, Eat, Pose, Nod, Faint,
+  Float, Tumble, Sit, LeapForth… ; rares : Strike, RearUp, SpAttack, Hover, Withdraw…
+- Longueurs médianes : Walk 4, Idle 4, Attack 11, Hurt 2, Charge 10, Shoot 12, Swing 9,
+  Double 16, Hop 10, Rotate 9, Faint 4, Tumble 8 — **exactement les cycles longs qui manquent**.
+- Taille : bbox max par frame médiane 26 px, **85 % tiennent en 32×32 à 1:1**, 100 % à 2:1
+  (attention : l'union sur un cycle Attack atteint ~48 px à cause du déplacement).
+- Couleurs : **100 % ≤ 15 couleurs + transparent** → compatible palette Esprite sans quantif.
+- **Cohérent avec le conditionnement existant** : n° de dex dans le chemin → types, stade,
+  famille (veekun), shiny, forme, genre.
+- Volume estimé : ~3339 × ~11 anims × 4 dirs ≈ **~150 k cycles de 2–16 frames** (vs ~5 k aujourd'hui).
+- Licence : **CC BY-NC 4.0** ; **666 jeux crédités « CHUNSOFT »** = extraits du jeu officiel
+  (non couvrables par la licence) ; IP Pokémon (même risque que veekun). Recherche non
+  commerciale défendable ; publication de checkpoint = mention NC + crédits ; isoler Chunsoft.
+
+### 3.2 LPC — ★ 4,5/5
+
+- **Universal LPC Spritesheet Character Generator** — [GitHub](https://github.com/liberatedpixelcup/Universal-LPC-Spritesheet-Character-Generator) :
+  88 130 calques, 6 types de corps, combinaisons ~illimitées ; 64×64, 4 directions ;
+  spellcast 7, thrust 8, walk 8(+1), slash 6, shoot 13, hurt 6 (1 dir), climb 6 (1 dir),
+  idle 2, jump 5, sit 3, emote 3, run 8, combat_idle 2, backslash 13, halfslash 6.
+  Perso ~30×51 → **2:1 ≈ 15×26 dans 32×32**. Composite ~29 couleurs → **quantif ≤ 15 requise**.
+  Licences par calque (OGA-BY, GPL, CC-BY-SA, CC-BY, CC0) → **filtrer sur CC0/CC-BY/OGA-BY**
+  pour publier. Effort moyen (compositeur à écrire via `sheet_definitions/*.json`), mais
+  générateur infini avec **identité cohérente entre actions** et référence gratuite.
+- **ElizaWy « LPC Revised »** — [GitHub](https://github.com/ElizaWy/LPC) : **CC-BY 3.0 / OGA-BY 3.0
+  uniquement** (licence la plus sûre) ; Walk, Run, Idle, Jump, Climb, Sit, Emotes, Combat 1h
+  (idle/slash/backslash/halfslash) ; pas de hurt/shoot/spellcast.
+- Dérivés prêts : `carlosuperb/lpc-action-pixel-art-diffusion` (HF, CC-BY-SA-3.0, 2,7 Go,
+  walk/thrust/slash × 4 dirs, labels implicites) ; YingzhenLi/Sprites (DSVAE 2018 : 1296 persos
+  × 9 action-directions × 8 frames ; HF `TalBarami/msd_sprites`, licence déclarée douteuse).
+
+### 3.3 Autres
+
+| Source | Constat | Licence | Score |
+|---|---|---|---|
+| **Ninja Adventure** (Pixel-boy) — [superpowers-asset-packs](https://github.com/sparklinlabs/superpowers-asset-packs) | ≥ 25 persos + 22 monstres, 16×16, 4 dirs, walk 4 / attaque / saut ; 8–15 couleurs ; 1:1 dans 32 | **CC0** | 3,5 |
+| **PokeAPI/sprites** — [GitHub](https://github.com/PokeAPI/sprites) | GIF BW animés 1173 (+shiny/dos/femelles), 40–120 px, 30–90 frames (idle combat → dédup + sous-échantillonnage) ; Showdown mélange pixel et rendus 3D (filtrer sur nb couleurs) | © TPC (le CC0 ne couvre pas les images) | 3 |
+| 0x72 DungeonTileset II | idle/run 4, vue droite (non vérifié, itch bloqué) | CC0 | 2,5 |
+| spraix_1024 (HF) | 560 anims avec labels texte riches, mais redimensionnées 1024 (grille perdue), sources hétérogènes | GPL déclarée, douteuse | 2 |
+| Spriters Resource (autres jeux) | énorme, étiquetage manuel | tous droits réservés | 2 (recherche) |
+| À exclure | Limbicnation/pixel-art-character (synthétique IA, NSFW partiel), pseudo-pixel statiques (diffusiondb-pixelart, nerijs) | — | — |
+
+### 3.4 Mapping vers les 14 actions Esprite
+
+| Action | PMD SpriteCollab | LPC |
+|---|---|---|
+| idle | Idle (Sleep en variante) | idle, combat_idle |
+| walk | Walk | walk |
+| run | — | run |
+| jump | Hop, Jump, LeapForth | jump |
+| climb | — | climb (up seulement) |
+| swim | — (Float/Hover/Sink : faible) | — |
+| attack | Attack, Strike, QuickStrike, Swing, Double, MultiStrike, Slam, Bite, Punch, Kick… | slash, thrust, backslash, halfslash |
+| shoot | Shoot (hors alias de Charge), SpAttack, Emit | shoot |
+| cast | Charge, SpAttack, RearUp, Rotate | spellcast |
+| guard | Withdraw (158) | — |
+| dodge | Tumble/TumbleBack (approx.) | — |
+| hurt | Hurt, Pain, Cringe, Injured | hurt (1 dir) |
+| defeat | Faint, Laying | hurt (chute) |
+| victory | Pose, Appeal, Dance, Twirl, Nod | emote |
+
+**Complémentarité** : PMD couvre les créatures (attack/shoot/cast/hurt/defeat/victory, cycles
+longs, 4 dirs), LPC couvre les humanoïdes (run/climb/cast/shoot). **Restent orphelins : swim,
+guard, dodge** (sources faibles) → candidats à la génération synthétique (enseignants §1) ou à
+une fusion d'actions dans le vocab.
 
 ## 4. Proposition
 
